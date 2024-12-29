@@ -28,18 +28,6 @@ def f(
     return x_dot
 
 
-def Omega(
-        omgea: np.ndarray,
-) -> np.ndarray:
-    p = omega
-    A_c = np.array([[p[0], -p[1], -p[2], -p[3]],
-                    [p[1], p[0], p[3], -p[2]],
-                    [p[2], -p[3], p[0], p[1]],
-                    [p[3], p[2], -p[1], p[0]]])
-
-    return A_c
-
-
 # From quaternion to rotation matrix (123)
 def q2R(
         q: np.ndarray
@@ -63,7 +51,9 @@ def q2e(
 
 
 def attitude_plot(
-        direction_vector: np.ndarray
+        ib: np.ndarray,
+        jb: np.ndarray,
+        kb: np.ndarray
 ):
     # Create a sphere
     phi, theta = np.linspace(0, np.pi, 20), np.linspace(0, 2 * np.pi, 20)
@@ -83,23 +73,31 @@ def attitude_plot(
     origin = np.array([0, 0, 0])
     for t in range(T):
         if np.mod(t, 10) == 0:
-            vector = direction_vector[:, t]
-            ax.plot([origin[0], vector[0]], [origin[1], vector[1]], [origin[2], vector[2]], color='g')
+            i = ib[:, t]
+            j = jb[:, t]
+            k = kb[:, t]
+            ax.plot([i[0]], [i[1]], [i[2]], 'r.')
+            i_line, = ax.plot([origin[0], i[0]], [origin[1], i[1]], [origin[2], i[2]], 'r')
+            j_line, = ax.plot([origin[0], j[0]], [origin[1], j[1]], [origin[2], j[2]], 'g')
+            k_line, = ax.plot([origin[0], k[0]], [origin[1], k[1]], [origin[2], k[2]], 'b')
 
-    # Set the aspect ratio to be equal
-    ax.set_box_aspect([1, 1, 1])
+            # Set the aspect ratio to be equal
+            ax.set_box_aspect([1, 1, 1])
 
-    # Set the limits
-    ax.set_xlim([-1, 1])
-    ax.set_ylim([-1, 1])
+            # Set the limits
+            ax.set_xlim([-1, 1])
+            ax.set_ylim([-1, 1])
 
-    ax.set_zlim([1, -1])
-    # Add labels and legend
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.legend()
-
+            ax.set_zlim([1, -1])
+            # Add labels and legend
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            plt.pause(0.1)
+            i_line.remove()
+            j_line.remove()
+            k_line.remove()
+            # plt.clf()
     plt.show()
     return None
 
@@ -123,12 +121,18 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
-    u[0, :] = -0.001 * np.ones(T - 1)
-    u[2, :] = 0.001 * np.ones(T - 1)
+    u[0, :] = -0.00 * np.ones(T - 1)
+    u[2, :] = 0.00 * np.ones(T - 1)
+    u[1, :] = 0.001 * np.ones(T - 1)
     p = np.array([0, -0.001, 0.00, 0.00])
     euler = np.zeros((3, T))
-    direction_vector = np.zeros((3, T))
-    direction_vector[:, 0] = np.array([1, 0, 0])
+    ib = np.zeros((3, T))
+    jb = np.zeros((3, T))
+    kb = np.zeros((3, T))
+    ib[:, 0] = np.array([1, 0, 0])
+    jb[:, 0] = np.array([0, 1, 0])
+    kb[:, 0] = np.array([0, 0, 1])
+
     for t in range(T - 1):
         x_t = x[:, t]
         u_t = u[:, t]
@@ -137,10 +141,14 @@ if __name__ == "__main__":
         x_tp1 = x_t + x_dot * dt
         x[:, t + 1] = x_tp1
         R = q2R(q_t)
-        direction_vector[:, t] = direction_vector[:, 0] @ R
+
+        ib[:, t] = ib[:, 0] @ R
+        jb[:, t] = jb[:, 0] @ R
+        kb[:, t] = kb[:, 0] @ R
+
         euler[:, t] = q2e(q_t)
 
-    attitude_plot(direction_vector)
+    attitude_plot(ib, jb, kb)
 
     # t = np.linspace(0, 50, T)
     # plt.plot(t, euler[0] * 180 / np.pi, 'r.')
