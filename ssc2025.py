@@ -108,7 +108,7 @@ def solve_convex_optimal_control_subproblem(
         U_traj: np.ndarray,
         x_des: np.ndarray,
 ) -> list:
-    r = 0.1
+    r = 1
     lambda_param = 10000
     # Define variables for optimization
     w = cp.Variable((3, T - 1))
@@ -133,7 +133,8 @@ def solve_convex_optimal_control_subproblem(
             Ad @ d_t + Bd @ w_t + E @ v_t)
         constraints.append(cp.abs(w_t) <= r)
     # Terminal condition
-    constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array([x_des[0, 0], x_des[1, 0], 0, 0]))
+    constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array(
+        [x_des[0], x_des[1], x_des[2], x_des[3], -x_des[4], -x_des[5], -x_des[6]]))
 
     # Define the problem
     problem = cp.Problem(cp.Minimize(sup_problem_cost), constraints)
@@ -149,7 +150,15 @@ def tra_gen(
         U_traj: np.ndarray,
         x_des: np.ndarray
 ) -> list:
-    return
+    iter = 3
+
+    for i in range(iter):
+        [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem(X_traj, U_traj, x_des)
+        X_traj = X_traj + d_traj_val
+        U_traj = U_traj + w_traj_val
+        print(cost)
+
+    return X_traj, U_traj
 
 
 # From quaternion to rotation matrix (123)
@@ -174,7 +183,25 @@ def q2e(
     return euler_angle
 
 
+def e2q(
+        euler: np.ndarray
+) -> np.ndarray:
+    euler = euler * np.pi / 180
+    q0 = np.cos(euler[0] / 2) * np.cos(euler[1] / 2) * np.cos(euler[2] / 2) + np.sin(euler[0] / 2) * np.sin(
+        euler[1] / 2) * np.sin(euler[2] / 2)
+    q1 = np.sin(euler[0] / 2) * np.cos(euler[1] / 2) * np.cos(euler[2] / 2) - np.cos(euler[0] / 2) * np.sin(
+        euler[1] / 2) * np.sin(euler[2] / 2)
+    q2 = np.cos(euler[0] / 2) * np.sin(euler[1] / 2) * np.cos(euler[2] / 2) + np.sin(euler[0] / 2) * np.cos(
+        euler[1] / 2) * np.sin(euler[2] / 2)
+    q3 = np.cos(euler[0] / 2) * np.cos(euler[1] / 2) * np.sin(euler[2] / 2) - np.sin(euler[0] / 2) * np.sin(
+        euler[1] / 2) * np.cos(euler[2] / 2)
+    q_out = np.array([q0, -q1, -q2, -q3])
+    q_out = q_out / LA.norm(q_out, 2)
+    return q_out
+
+
 def attitude_plot(
+        euler_des: np.ndarray,
         ib: np.ndarray,
         jb: np.ndarray,
         kb: np.ndarray
@@ -193,17 +220,37 @@ def attitude_plot(
     # Plot the sphere
     ax.plot_surface(x, y, z, color='cyan', alpha=0.3, edgecolor='none')
 
-    # Plot the unit vectors
+    # Plot desired attitude
     origin = np.array([0, 0, 0])
+    ib_des = np.array([1, 0, 0])
+    jb_des = np.array([0, 1, 0])
+    kb_des = np.array([0, 0, 1])
+    q_des = e2q(euler_des)
+    R_des = q2R(q_des)
+    ib_des = R_des @ ib_des
+    jb_des = R_des @ jb_des
+    kb_des = R_des @ kb_des
+    ax.plot([origin[0], ib_des[0]], [origin[1], ib_des[1]], [origin[2], ib_des[2]], 'r')
+    ax.plot([origin[0], jb_des[0]], [origin[1], jb_des[1]], [origin[2], jb_des[2]], 'g')
+    ax.plot([origin[0], kb_des[0]], [origin[1], kb_des[1]], [origin[2], kb_des[2]], 'b')
+
+
+    # Plot the initial and desired attitude
+    ax.plot([origin[0], ib_des[0]], [origin[1], ib_des[1]], [origin[2], ib_des[2]], 'r')
+    ax.plot([ib_des[0]], [ib_des[1]], [ib_des[2]], 'co')
+    
+
+    # ax.plot()
+    # Plot the unit vectors
     for t in range(T):
         if np.mod(t, 10) == 0:
             i = ib[:, t]
             j = jb[:, t]
             k = kb[:, t]
             ax.plot([i[0]], [i[1]], [i[2]], 'r.')
-            i_line, = ax.plot([origin[0], i[0]], [origin[1], i[1]], [origin[2], i[2]], 'r')
-            j_line, = ax.plot([origin[0], j[0]], [origin[1], j[1]], [origin[2], j[2]], 'g')
-            k_line, = ax.plot([origin[0], k[0]], [origin[1], k[1]], [origin[2], k[2]], 'b')
+            i_line, = ax.plot([origin[0], i[0]], [origin[1], i[1]], [origin[2], i[2]], 'r-.')
+            j_line, = ax.plot([origin[0], j[0]], [origin[1], j[1]], [origin[2], j[2]], 'g-.')
+            k_line, = ax.plot([origin[0], k[0]], [origin[1], k[1]], [origin[2], k[2]], 'b-.')
 
             # Set the aspect ratio to be equal
             ax.set_box_aspect([1, 1, 1])
@@ -231,7 +278,7 @@ def attitude_plot(
 #########Global vriabls
 
 
-Ts = 60  # 50 second
+Ts = 30  # 50 second
 dt = 0.1
 T = int(Ts / dt)  # Total time steps
 
@@ -241,7 +288,10 @@ Iyy = 1
 Izz = 1
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
-
+euler_des = np.array([25, 20, 10])
+q_des = e2q(euler_des)
+omega_des = np.zeros(3)
+x_des = np.concatenate((omega_des,q_des ), 0)
 if __name__ == "__main__":
 
     q = np.zeros((4, T))
@@ -249,47 +299,55 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
-    u[0, :] = -0.00 * np.ones(T - 1)
-    u[2, :] = 0.001 * np.ones(T - 1)
-    u[1, :] = -0.00 * np.ones(T - 1)
+    u[0, :] = 0.001 * np.ones(T - 1)
+    u[2, :] = 0.00 * np.ones(T - 1)
+    u[1, :] = 0.00 * np.ones(T - 1)
     p = np.array([0, -0.001, 0.00, 0.00])
-    euler = np.zeros((3, T))
     ib = np.zeros((3, T))
     jb = np.zeros((3, T))
     kb = np.zeros((3, T))
     ib[:, 0] = np.array([1, 0, 0])
     jb[:, 0] = np.array([0, 1, 0])
     kb[:, 0] = np.array([0, 0, 1])
-
+    x_traj = np.zeros([n, T])
+    x_traj[3, :] = np.ones(T)
+    u_traj = np.zeros([3, T - 1])
+    [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
     for t in range(T - 1):
-        x_t = x[:, t]
-        u_t = u[:, t]
-        q_t = x_t[3:] / LA.norm(x_t[3:], 2)
-        [A, B] = linearize(f_jax, x_t, u_t)
-        A = np.asarray(A)
-        B = np.asarray(B)
-        # Continuous
-        x_dot = f_continuous(x_t, u_t)
-        # Linearized
-        x_dot_ja = A @ x_t + B @ u_t
-        # Discretized
-        [Ad, Bd] = discretization(A, B)
-        # x_tp1 = x_t + x_dot * dt # Continuous
-        # x_tp1 = x_t + x_dot_ja * dt # Continuous and linearized
-        x_tp1 = Ad @ x_t + Bd @ u_t  # Discretized
-        x[:, t + 1] = x_tp1
+        q_t = x_traj[3:, t]
         R = q2R(q_t)
-
         ib[:, t] = ib[:, 0] @ R
         jb[:, t] = jb[:, 0] @ R
         kb[:, t] = kb[:, 0] @ R
+    attitude_plot(euler_des, ib, jb, kb)
 
-        euler[:, t] = q2e(q_t)
-        if np.mod(t, 40) == 0:
-            print("x_dot", x_dot)
-            print("x_dot_jax", x_dot_ja)
-
-    attitude_plot(ib, jb, kb)
+    # for t in range(T - 1):
+    #     x_t = x[:, t]
+    #     u_t = u[:, t]
+    #     q_t = x_t[3:] / LA.norm(x_t[3:], 2)
+    #     [A, B] = linearize(f_jax, x_t, u_t)
+    #     A = np.asarray(A)
+    #     B = np.asarray(B)
+    #     # Continuous
+    #     x_dot = f_continuous(x_t, u_t)
+    #     # Linearized
+    #     x_dot_ja = A @ x_t + B @ u_t
+    #     # Discretized
+    #     [Ad, Bd] = discretization(A, B)
+    #     # x_tp1 = x_t + x_dot * dt # Continuous
+    #     # x_tp1 = x_t + x_dot_ja * dt # Continuous and linearized
+    #     x_tp1 = Ad @ x_t + Bd @ u_t  # Discretized
+    #     x[:, t + 1] = x_tp1
+    #     R = q2R(q_t)
+    #
+    #     ib[:, t] = ib[:, 0] @ R
+    #     jb[:, t] = jb[:, 0] @ R
+    #     kb[:, t] = kb[:, 0] @ R
+    #     if np.mod(t, 40) == 0:
+    #         print("x_dot", x_dot)
+    #         print("x_dot_jax", x_dot_ja)
+    #
+    # attitude_plot(euler_des, ib, jb, kb)
 
     # t = np.linspace(0, 50, T)
     # plt.plot(t, euler[0] * 180 / np.pi, 'r.')
