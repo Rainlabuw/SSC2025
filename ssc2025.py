@@ -92,6 +92,17 @@ def discretization(
     return Ad, Bd
 
 
+def sub_problem_cost_fun(
+        lambda_param: float,
+        w: cp.Variable,
+        v: cp.Variable,
+        U_traj: np.ndarray
+):
+    sub_problem_cost = lambda_param * cp.norm(((U_traj + w)), 1) + 1 * lambda_param * cp.sum(
+        cp.sum(cp.abs(v)))
+    return sub_problem_cost
+
+
 def solve_convex_optimal_control_subproblem(
         X_traj: np.ndarray,
         U_traj: np.ndarray,
@@ -105,6 +116,7 @@ def solve_convex_optimal_control_subproblem(
     d = cp.Variable((n, T))
     constraints = [d[:, 0] == np.zeros(7)]
     E = np.eye(7)
+    sup_problem_cost = sub_problem_cost_fun(lambda_param, w, v, U_traj)
     for t in range(T - 1):
         x_t = X_traj[:, t]
         x_tp1 = X_traj[:, t + 1]
@@ -119,7 +131,25 @@ def solve_convex_optimal_control_subproblem(
             x_tp1 + d_tp1 ==
             f_discretized(x_t, u_t) +
             Ad @ d_t + Bd @ w_t + E @ v_t)
-    return None
+        constraints.append(cp.abs(w_t) <= r)
+    # Terminal condition
+    constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array([x_des[0, 0], x_des[1, 0], 0, 0]))
+
+    # Define the problem
+    problem = cp.Problem(cp.Minimize(sup_problem_cost), constraints)
+    problem.solve(solver=cp.CLARABEL)
+    cost = problem.value
+    w_traj_val = w.value
+    d_traj_val = d.value
+    return cost, d_traj_val, w_traj_val
+
+
+def tra_gen(
+        X_traj: np.ndarray,
+        U_traj: np.ndarray,
+        x_des: np.ndarray
+) -> list:
+    return
 
 
 # From quaternion to rotation matrix (123)
@@ -213,6 +243,7 @@ J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
 
 if __name__ == "__main__":
+
     q = np.zeros((4, T))
     omega = np.zeros((3, T))
     q[:, 0] = np.array([1, 0, 0, 0])
