@@ -10,7 +10,7 @@ from scipy.interpolate import InterpolatedUnivariateSpline
 jax.config.update('jax_enable_x64', True)
 
 
-def f(
+def f_continuous(
         x_t: np.ndarray,
         u_t: np.ndarray
 ) -> np.ndarray:
@@ -32,6 +32,15 @@ def f(
     return x_dot
 
 
+def f_discretized(
+        x_t: np.ndarray,
+        u_t: np.ndarray
+) -> np.ndarray:
+    x_dot = f_continuous(x_t, u_t)
+    x_tp1 = x_t + x_dot * dt
+    return x_tp1
+
+
 def f_jax(
         x: jnp.ndarray,
         u: jnp.ndarray
@@ -50,7 +59,6 @@ def f_jax(
     omegadot = jnp.linalg.inv(J) @ (u - jnp.cross(omega, (J @ omega)))
     qdot = 0.25 * Omega @ q
     # qdot_t = np.zeros(4)
-
 
     x_dot_jax = jnp.concatenate((omegadot, qdot), 0)
     return x_dot_jax
@@ -82,6 +90,36 @@ def discretization(
     Bd = sysd.B
 
     return Ad, Bd
+
+
+def solve_convex_optimal_control_subproblem(
+        X_traj: np.ndarray,
+        U_traj: np.ndarray,
+        x_des: np.ndarray,
+) -> list:
+    r = 0.1
+    lambda_param = 10000
+    # Define variables for optimization
+    w = cp.Variable((3, T - 1))
+    v = cp.Variable((n, T - 1))
+    d = cp.Variable((n, T))
+    constraints = [d[:, 0] == np.zeros(7)]
+    E = np.eye(7)
+    for t in range(T - 1):
+        x_t = X_traj[:, t]
+        x_tp1 = X_traj[:, t + 1]
+        d_t = d[:, t]
+        d_tp1 = d[:, t + 1]
+        u_t = U_traj[:, t]
+        w_t = w[:, t]
+        v_t = v[:, t]
+        [A, B] = linearize(f_jax, x_t, u_t)
+        [Ad, Bd] = discretization(A, B)
+        constraints.append(
+            x_tp1 + d_tp1 ==
+            f_discretized(x_t, u_t) +
+            Ad @ d_t + Bd @ w_t + E @ v_t)
+    return None
 
 
 # From quaternion to rotation matrix (123)
@@ -150,7 +188,7 @@ def attitude_plot(
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
             plt.pause(0.1)
-            if t < T-10:
+            if t < T - 10:
                 i_line.remove()
                 j_line.remove()
                 k_line.remove()
@@ -172,6 +210,7 @@ Ixx = 1
 Iyy = 1
 Izz = 1
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
+n = 7
 
 if __name__ == "__main__":
     q = np.zeros((4, T))
@@ -179,9 +218,9 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
-    u[0, :] = -0.002 * np.ones(T - 1)
+    u[0, :] = -0.00 * np.ones(T - 1)
     u[2, :] = 0.001 * np.ones(T - 1)
-    u[1, :] = -0.0013 * np.ones(T - 1)
+    u[1, :] = -0.00 * np.ones(T - 1)
     p = np.array([0, -0.001, 0.00, 0.00])
     euler = np.zeros((3, T))
     ib = np.zeros((3, T))
@@ -199,14 +238,14 @@ if __name__ == "__main__":
         A = np.asarray(A)
         B = np.asarray(B)
         # Continuous
-        x_dot = f(x_t, u_t)
+        x_dot = f_continuous(x_t, u_t)
         # Linearized
         x_dot_ja = A @ x_t + B @ u_t
         # Discretized
         [Ad, Bd] = discretization(A, B)
         # x_tp1 = x_t + x_dot * dt # Continuous
         # x_tp1 = x_t + x_dot_ja * dt # Continuous and linearized
-        x_tp1 = Ad @ x_t + Bd @ u_t # Discretized
+        x_tp1 = Ad @ x_t + Bd @ u_t  # Discretized
         x[:, t + 1] = x_tp1
         R = q2R(q_t)
 
