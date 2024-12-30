@@ -1,9 +1,13 @@
 from scipy import signal
+import jax
+import jax.numpy as jnp
 from numpy import linalg as LA
 import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
 from scipy.interpolate import InterpolatedUnivariateSpline
+
+jax.config.update('jax_enable_x64', True)
 
 
 def f(
@@ -26,6 +30,58 @@ def f(
     x_dot = np.concatenate((omegadot_t, qdot_t), 0)
 
     return x_dot
+
+
+def f_jax(
+        x: jnp.ndarray,
+        u: jnp.ndarray
+) -> jnp.ndarray:
+    omega = x[0:3]
+    q = x[3:]
+    p = jnp.zeros(4)
+    # p[1:] = omega
+    p = p.at[1:].set(omega)
+    Omega = jnp.array([[p[0], -p[1], -p[2], -p[3]],
+                       [p[1], p[0], p[3], -p[2]],
+                       [p[2], -p[3], p[0], p[1]],
+                       [p[3], p[2], -p[1], p[0]]])
+
+    # omegadot = LA.inv(J) @ (u - np.cross(omega, (J @ omega)))
+    omegadot = jnp.linalg.inv(J) @ (u - jnp.cross(omega, (J @ omega)))
+    qdot = 0.25 * Omega @ q
+    # qdot_t = np.zeros(4)
+
+
+    x_dot_jax = jnp.concatenate((omegadot, qdot), 0)
+    return x_dot_jax
+
+
+def linearize(
+        f_jax: jnp.ndarray,
+        x_t: np.ndarray,
+        u_t: np.ndarray
+):
+    # Compute the Jacobian of f(x, u) with respect to x (A matrix)
+    # A = jax.jacobian(lambda x: f_jax(x, u_t))(x_t)
+    A = jax.jacfwd(lambda x: f_jax(x, u_t))(x_t)
+    # Compute the Jacobian of f(x, u) with respect to u (B matrix)
+    # B = jax.jacobian(lambda u: f_jax(x_t, u))(u_t)
+    B = jax.jacfwd(lambda u: f_jax(x_t, u))(u_t)
+    return A, B
+
+
+def discretization(
+        A: np.ndarray,
+        B: np.ndarray
+) -> list:
+    C = np.eye(7)
+    D = np.zeros((7, 3))
+    sys = signal.StateSpace(A, B, C, D)
+    sysd = sys.to_discrete(dt)
+    Ad = sysd.A
+    Bd = sysd.B
+
+    return Ad, Bd
 
 
 # From quaternion to rotation matrix (123)
@@ -94,10 +150,12 @@ def attitude_plot(
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
             plt.pause(0.1)
-            i_line.remove()
-            j_line.remove()
-            k_line.remove()
+            if t < T-10:
+                i_line.remove()
+                j_line.remove()
+                k_line.remove()
             # plt.clf()
+
     plt.show()
     return None
 
@@ -105,8 +163,8 @@ def attitude_plot(
 #########Global vriabls
 
 
-Ts = 50  # 50 second
-dt = 0.2
+Ts = 60  # 50 second
+dt = 0.1
 T = int(Ts / dt)  # Total time steps
 
 # Assume symmetric cube
@@ -121,9 +179,9 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
-    u[0, :] = -0.00 * np.ones(T - 1)
-    u[2, :] = 0.00 * np.ones(T - 1)
-    u[1, :] = 0.001 * np.ones(T - 1)
+    u[0, :] = -0.002 * np.ones(T - 1)
+    u[2, :] = 0.001 * np.ones(T - 1)
+    u[1, :] = -0.0013 * np.ones(T - 1)
     p = np.array([0, -0.001, 0.00, 0.00])
     euler = np.zeros((3, T))
     ib = np.zeros((3, T))
@@ -137,8 +195,18 @@ if __name__ == "__main__":
         x_t = x[:, t]
         u_t = u[:, t]
         q_t = x_t[3:] / LA.norm(x_t[3:], 2)
+        [A, B] = linearize(f_jax, x_t, u_t)
+        A = np.asarray(A)
+        B = np.asarray(B)
+        # Continuous
         x_dot = f(x_t, u_t)
-        x_tp1 = x_t + x_dot * dt
+        # Linearized
+        x_dot_ja = A @ x_t + B @ u_t
+        # Discretized
+        [Ad, Bd] = discretization(A, B)
+        # x_tp1 = x_t + x_dot * dt # Continuous
+        # x_tp1 = x_t + x_dot_ja * dt # Continuous and linearized
+        x_tp1 = Ad @ x_t + Bd @ u_t # Discretized
         x[:, t + 1] = x_tp1
         R = q2R(q_t)
 
@@ -147,6 +215,9 @@ if __name__ == "__main__":
         kb[:, t] = kb[:, 0] @ R
 
         euler[:, t] = q2e(q_t)
+        if np.mod(t, 40) == 0:
+            print("x_dot", x_dot)
+            print("x_dot_jax", x_dot_ja)
 
     attitude_plot(ib, jb, kb)
 
