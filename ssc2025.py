@@ -108,7 +108,7 @@ def solve_convex_optimal_control_subproblem(
         U_traj: np.ndarray,
         x_des: np.ndarray,
 ) -> list:
-    r = 1
+    r = 0.5
     lambda_param = 10000
     # Define variables for optimization
     w = cp.Variable((3, T - 1))
@@ -150,7 +150,7 @@ def tra_gen(
         U_traj: np.ndarray,
         x_des: np.ndarray
 ) -> list:
-    iter = 3
+    iter = 2
 
     for i in range(iter):
         [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem(X_traj, U_traj, x_des)
@@ -183,6 +183,7 @@ def q2e(
     return euler_angle
 
 
+# Take in euler angle in degree
 def e2q(
         euler: np.ndarray
 ) -> np.ndarray:
@@ -234,14 +235,31 @@ def attitude_plot(
     ax.plot([origin[0], jb_des[0]], [origin[1], jb_des[1]], [origin[2], jb_des[2]], 'g')
     ax.plot([origin[0], kb_des[0]], [origin[1], kb_des[1]], [origin[2], kb_des[2]], 'b')
 
-
     # Plot the initial and desired attitude
     ax.plot([origin[0], ib_des[0]], [origin[1], ib_des[1]], [origin[2], ib_des[2]], 'r')
     ax.plot([ib_des[0]], [ib_des[1]], [ib_des[2]], 'co')
-    
 
-    # ax.plot()
-    # Plot the unit vectors
+    # Plot the keep out cone
+    x_axis = np.array([1, 0, 0])
+    zone_att_0 = np.array([0, keep_out_att[1] + half_angle, keep_out_att[2]])
+    zone_q_0 = e2q(zone_att_0)
+    zone_R_0 = q2R(zone_q_0)
+    zone_vec_0 = zone_R_0 @ x_axis
+    zone_q_center = e2q(keep_out_att)
+    zone_vec_center = q2R(zone_q_center) @ x_axis
+    theta = np.linspace(0, 2 * np.pi, 200)
+    ax.plot([zone_vec_center[0]], [zone_vec_center[1]], [zone_vec_center[2]], 'co')
+    for i in range(200):
+        theta_i = theta[i]
+        q0 = np.array([np.cos(theta_i/2)])
+        q_vec = np.sin(theta_i/2) *  zone_vec_center
+        zone_q = np.concatenate((q0,q_vec),0)
+        zone_R = q2R(zone_q)
+        zone_vec = zone_R @ zone_vec_0
+        ax.plot([zone_vec[0]], [zone_vec[1]], [zone_vec[2]], 'y.')
+    # zone1_vec[]
+
+    # Plot the attitude history
     for t in range(T):
         if np.mod(t, 10) == 0:
             i = ib[:, t]
@@ -267,9 +285,9 @@ def attitude_plot(
             plt.pause(0.1)
             if t < T - 10:
                 i_line.remove()
-                j_line.remove()
-                k_line.remove()
-            # plt.clf()
+            j_line.remove()
+            k_line.remove()
+    # plt.clf()
 
     plt.show()
     return None
@@ -284,14 +302,17 @@ T = int(Ts / dt)  # Total time steps
 
 # Assume symmetric cube
 Ixx = 1
-Iyy = 1
-Izz = 1
+Iyy = 2
+Izz = 2
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
-euler_des = np.array([25, 20, 10])
+euler_des = np.array([0, 40, 40])
+keep_out_att = np.array([0, 0, 40])
+half_angle = 30
+
 q_des = e2q(euler_des)
 omega_des = np.zeros(3)
-x_des = np.concatenate((omega_des,q_des ), 0)
+x_des = np.concatenate((omega_des, q_des), 0)
 if __name__ == "__main__":
 
     q = np.zeros((4, T))
@@ -312,6 +333,7 @@ if __name__ == "__main__":
     x_traj = np.zeros([n, T])
     x_traj[3, :] = np.ones(T)
     u_traj = np.zeros([3, T - 1])
+    # attitude_plot(euler_des, ib, jb, kb)
     [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
     for t in range(T - 1):
         q_t = x_traj[3:, t]
@@ -321,6 +343,16 @@ if __name__ == "__main__":
         kb[:, t] = kb[:, 0] @ R
     attitude_plot(euler_des, ib, jb, kb)
 
+    time = np.linspace(0, Ts, T - 1)
+    plt.subplot(3, 1, 1)
+    plt.plot(time, u_traj[0, :])
+
+    plt.subplot(3, 1, 2)
+    plt.plot(time, u_traj[1, :])
+
+    plt.subplot(3, 1, 3)
+    plt.plot(time, u_traj[2, :])
+    plt.show()
     # for t in range(T - 1):
     #     x_t = x[:, t]
     #     u_t = u[:, t]
