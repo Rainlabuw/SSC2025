@@ -117,6 +117,7 @@ def solve_convex_optimal_control_subproblem(
     constraints = [d[:, 0] == np.zeros(7)]
     E = np.eye(7)
     sup_problem_cost = sub_problem_cost_fun(lambda_param, w, v, U_traj)
+    S = np.zeros(T)
     for t in range(T - 1):
         x_t = X_traj[:, t]
         x_tp1 = X_traj[:, t + 1]
@@ -127,11 +128,20 @@ def solve_convex_optimal_control_subproblem(
         v_t = v[:, t]
         [A, B] = linearize(f_jax, x_t, u_t)
         [Ad, Bd] = discretization(A, B)
+
+        # Dynamic constraints
         constraints.append(
             x_tp1 + d_tp1 ==
             f_discretized(x_t, u_t) +
             Ad @ d_t + Bd @ w_t + E @ v_t)
         constraints.append(cp.abs(w_t) <= r)
+
+        # Keep out zone constraints
+
+        body_vec = np.array([1, 0, 0]) @ q2R(x_t[3:])
+        S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
+        S[t] = S_t
+        aa = 4
     # Terminal condition
     constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array(
         [x_des[0], x_des[1], x_des[2], x_des[3], -x_des[4], -x_des[5], -x_des[6]]))
@@ -240,20 +250,13 @@ def attitude_plot(
     ax.plot([ib_des[0]], [ib_des[1]], [ib_des[2]], 'co')
 
     # Plot the keep out cone
-    x_axis = np.array([1, 0, 0])
-    zone_att_0 = np.array([0, keep_out_att[1] + half_angle, keep_out_att[2]])
-    zone_q_0 = e2q(zone_att_0)
-    zone_R_0 = q2R(zone_q_0)
-    zone_vec_0 = zone_R_0 @ x_axis
-    zone_q_center = e2q(keep_out_att)
-    zone_vec_center = q2R(zone_q_center) @ x_axis
     theta = np.linspace(0, 2 * np.pi, 200)
     ax.plot([zone_vec_center[0]], [zone_vec_center[1]], [zone_vec_center[2]], 'co')
     for i in range(200):
         theta_i = theta[i]
-        q0 = np.array([np.cos(theta_i/2)])
-        q_vec = np.sin(theta_i/2) *  zone_vec_center
-        zone_q = np.concatenate((q0,q_vec),0)
+        q0 = np.array([np.cos(theta_i / 2)])
+        q_vec = np.sin(theta_i / 2) * zone_vec_center
+        zone_q = np.concatenate((q0, q_vec), 0)
         zone_R = q2R(zone_q)
         zone_vec = zone_R @ zone_vec_0
         ax.plot([zone_vec[0]], [zone_vec[1]], [zone_vec[2]], 'y.')
@@ -306,9 +309,16 @@ Iyy = 2
 Izz = 2
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
-euler_des = np.array([0, 40, 40])
+euler_des = np.array([0, 20, 80])
 keep_out_att = np.array([0, 0, 40])
 half_angle = 30
+x_axis = np.array([1, 0, 0])
+zone_att_0 = np.array([0, keep_out_att[1] + half_angle, keep_out_att[2]])
+zone_q_0 = e2q(zone_att_0)
+zone_R_0 = q2R(zone_q_0)
+zone_vec_0 = zone_R_0 @ x_axis
+zone_q_center = e2q(keep_out_att)
+zone_vec_center = q2R(zone_q_center) @ x_axis
 
 q_des = e2q(euler_des)
 omega_des = np.zeros(3)
@@ -335,12 +345,20 @@ if __name__ == "__main__":
     u_traj = np.zeros([3, T - 1])
     # attitude_plot(euler_des, ib, jb, kb)
     [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
+    S = np.zeros(T)
     for t in range(T - 1):
         q_t = x_traj[3:, t]
         R = q2R(q_t)
         ib[:, t] = ib[:, 0] @ R
         jb[:, t] = jb[:, 0] @ R
         kb[:, t] = kb[:, 0] @ R
+
+
+
+        body_vec = np.array([1, 0, 0]) @ q2R(x_traj[3:, t])
+        # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
+        S_t = body_vec.T @ zone_vec_center
+        S[t] = S_t
     attitude_plot(euler_des, ib, jb, kb)
 
     time = np.linspace(0, Ts, T - 1)
