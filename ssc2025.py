@@ -64,6 +64,61 @@ def f_jax(
     return x_dot_jax
 
 
+def S_continuous(
+        x_t: jnp.ndarray,
+        u_t: jnp.ndarray
+) -> jnp.ndarray:
+    q = x_t[3:]
+    R = jnp.array(
+        [[1 - 2 * (q[2] * q[2] + q[3] * q[3]), 2 * (q[1] * q[2] - q[0] * q[3]), 2 * (q[1] * q[3] + q[0] * q[2])],
+         [2 * (q[1] * q[2] + q[0] * q[3]), 1 - 2 * (q[1] * q[1] + q[3] * q[3]), 2 * (q[2] * q[3] - q[0] * q[1])],
+         [2 * (q[1] * q[3] - q[0] * q[2]), 2 * (q[2] * q[3] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])]])
+    body_vec = jnp.array([1, 0, 0]) @ R
+
+    S_t = body_vec.T @ zone_vec_center - jnp.cos(half_angle * jnp.pi / 180)
+    return S_t
+
+
+def S_fun(
+        x_t: np.ndarray,
+) -> np.ndarray:
+    q = x_t[3:]
+    R = np.array(
+        [[1 - 2 * (q[2] * q[2] + q[3] * q[3]), 2 * (q[1] * q[2] - q[0] * q[3]), 2 * (q[1] * q[3] + q[0] * q[2])],
+         [2 * (q[1] * q[2] + q[0] * q[3]), 1 - 2 * (q[1] * q[1] + q[3] * q[3]), 2 * (q[2] * q[3] - q[0] * q[1])],
+         [2 * (q[1] * q[3] - q[0] * q[2]), 2 * (q[2] * q[3] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])]])
+    body_vec = np.array([1, 0, 0]) @ R
+
+    S = body_vec.T @ zone_vec_center - np.cos(half_angle * np.pi / 180)
+    return S
+
+
+def S_linearize(
+        S_continuous: jnp.ndarray,
+        x_t: np.ndarray,
+        u_t: np.ndarray
+):
+    # Compute the Jacobian of f(x, u) with respect to x (A matrix)
+    # A = jax.jacobian(lambda x: f_jax(x, u_t))(x_t)
+    dSdx = jax.jacfwd(lambda x: S_continuous(x, u_t))(x_t)
+    # Compute the Jacobian of f(x, u) with respect to u (B matrix)
+    dSdu = jax.jacfwd(lambda u: S_continuous(x_t, u))(u_t)
+    return dSdx, dSdu
+
+
+# def discretization(
+#         dSdx: np.ndarray,
+#         dSdu: np.ndarray
+# ) -> list:
+#     C = np.eye(7)
+#     D = np.zeros((7, 3))
+#     sys = signal.StateSpace(dSdx, dSdu, C, D)
+#     sysd = sys.to_discrete(dt)
+#     dSdx_d = sysd.grad_S
+#
+#     return dSdx_d
+
+
 def linearize(
         f_jax: jnp.ndarray,
         x_t: np.ndarray,
@@ -96,10 +151,11 @@ def sub_problem_cost_fun(
         lambda_param: float,
         w: cp.Variable,
         v: cp.Variable,
+        s: cp.Variable,
         U_traj: np.ndarray
 ):
     sub_problem_cost = lambda_param * cp.norm(((U_traj + w)), 1) + 1 * lambda_param * cp.sum(
-        cp.sum(cp.abs(v)))
+        cp.sum(cp.abs(v))) + 1 * lambda_param * cp.sum(cp.pos(s))
     return sub_problem_cost
 
 
@@ -108,15 +164,16 @@ def solve_convex_optimal_control_subproblem(
         U_traj: np.ndarray,
         x_des: np.ndarray,
 ) -> list:
-    r = 0.5
+    r = 0.3
     lambda_param = 10000
     # Define variables for optimization
     w = cp.Variable((3, T - 1))
     v = cp.Variable((n, T - 1))
     d = cp.Variable((n, T))
+    s = cp.Variable(T)
     constraints = [d[:, 0] == np.zeros(7)]
     E = np.eye(7)
-    sup_problem_cost = sub_problem_cost_fun(lambda_param, w, v, U_traj)
+    sup_problem_cost = sub_problem_cost_fun(lambda_param, w, v, s, U_traj)
     S = np.zeros(T)
     for t in range(T - 1):
         x_t = X_traj[:, t]
@@ -128,6 +185,7 @@ def solve_convex_optimal_control_subproblem(
         v_t = v[:, t]
         [A, B] = linearize(f_jax, x_t, u_t)
         [Ad, Bd] = discretization(A, B)
+        [dSdx, dSdu] = S_linearize(S_continuous, x_t, u_t)
 
         # Dynamic constraints
         constraints.append(
@@ -137,10 +195,11 @@ def solve_convex_optimal_control_subproblem(
         constraints.append(cp.abs(w_t) <= r)
 
         # Keep out zone constraints
-
-        body_vec = np.array([1, 0, 0]) @ q2R(x_t[3:])
-        S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
+        S_t = S_fun(x_t)
         S[t] = S_t
+        dSdx = np.asarray(dSdx)
+        constraints.append(S_t + dSdx @ d_t <= s[t])
+        constraints.append(s[t] >= 0)
         aa = 4
     # Terminal condition
     constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array(
@@ -160,7 +219,7 @@ def tra_gen(
         U_traj: np.ndarray,
         x_des: np.ndarray
 ) -> list:
-    iter = 2
+    iter = 5
 
     for i in range(iter):
         [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem(X_traj, U_traj, x_des)
@@ -352,8 +411,6 @@ if __name__ == "__main__":
         ib[:, t] = ib[:, 0] @ R
         jb[:, t] = jb[:, 0] @ R
         kb[:, t] = kb[:, 0] @ R
-
-
 
         body_vec = np.array([1, 0, 0]) @ q2R(x_traj[3:, t])
         # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
