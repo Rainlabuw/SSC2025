@@ -106,19 +106,6 @@ def S_linearize(
     return dSdx, dSdu
 
 
-# def discretization(
-#         dSdx: np.ndarray,
-#         dSdu: np.ndarray
-# ) -> list:
-#     C = np.eye(7)
-#     D = np.zeros((7, 3))
-#     sys = signal.StateSpace(dSdx, dSdu, C, D)
-#     sysd = sys.to_discrete(dt)
-#     dSdx_d = sysd.grad_S
-#
-#     return dSdx_d
-
-
 def linearize(
         f_jax: jnp.ndarray,
         x_t: np.ndarray,
@@ -163,8 +150,10 @@ def solve_convex_optimal_control_subproblem(
         X_traj: np.ndarray,
         U_traj: np.ndarray,
         x_des: np.ndarray,
+        r: np.ndarray,
+        i: int
 ) -> list:
-    r = 0.3
+    # r = 0.2
     lambda_param = 10000
     # Define variables for optimization
     w = cp.Variable((3, T - 1))
@@ -191,16 +180,36 @@ def solve_convex_optimal_control_subproblem(
         constraints.append(
             x_tp1 + d_tp1 ==
             f_discretized(x_t, u_t) +
-            Ad @ d_t + Bd @ w_t + E @ v_t)
+            Ad @ d_t + Bd @ w_t + 1 * E @ v_t)
         constraints.append(cp.abs(w_t) <= r)
+        if i <= 0:
+            constraints.append(
+                x_tp1 + d_tp1 ==
+                f_discretized(x_t, u_t) +
+                Ad @ d_t + Bd @ w_t + 1 * E @ v_t)
+            constraints.append(cp.abs(w_t) <= r)
+        else:
+            constraints.append(
+                x_tp1 + d_tp1 ==
+                f_discretized(x_t, u_t) +
+                Ad @ d_t + Bd @ w_t + 0 * E @ v_t)
+            constraints.append(cp.abs(w_t) <= r)
+            # Keep out zone constraints
+            S_t = S_fun(x_t)
+            S[t] = S_t
+            dSdx = np.asarray(dSdx)
+            dSdu = np.asarray(dSdu)
+            constraints.append(S_t + dSdx @ d_t <= s[t])
+            constraints.append(s[t] >= 0)
+        # constraints.append(cp.abs(u_t + w_t) <= 0.02)
+        # # Keep out zone constraints
+        # S_t = S_fun(x_t)
+        # S[t] = S_t
+        # dSdx = np.asarray(dSdx)
+        # dSdu = np.asarray(dSdu)
+        # constraints.append(S_t + dSdx @ d_t <= s[t])
+        # constraints.append(s[t] >= 0)
 
-        # Keep out zone constraints
-        S_t = S_fun(x_t)
-        S[t] = S_t
-        dSdx = np.asarray(dSdx)
-        constraints.append(S_t + dSdx @ d_t <= s[t])
-        constraints.append(s[t] >= 0)
-        aa = 4
     # Terminal condition
     constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array(
         [x_des[0], x_des[1], x_des[2], x_des[3], -x_des[4], -x_des[5], -x_des[6]]))
@@ -219,15 +228,47 @@ def tra_gen(
         U_traj: np.ndarray,
         x_des: np.ndarray
 ) -> list:
-    iter = 5
-
+    iter = 9
+    cost_list = np.zeros(iter)
+    r = 1
     for i in range(iter):
-        [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem(X_traj, U_traj, x_des)
+        [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem(X_traj, U_traj, x_des, r, i)
         X_traj = X_traj + d_traj_val
         U_traj = U_traj + w_traj_val
-        print(cost)
+        print('Iteration:   ', i, '    Cost:   ', cost, '   Truest region:  ', r)
+        cost_list[i] = cost
+        r = trust_region_update(cost_list, i, r)
 
     return X_traj, U_traj
+
+
+def trust_region_update(
+        cost_list: np.ndarray,
+        iter: int,
+        r_current: np.ndarray
+) -> np.ndarray:
+    rho0 = 0.1
+    rho1 = 0.25
+    rho2 = 0.7
+    r_default = 0.5
+    if iter >= 1:
+        delta_L = (cost_list[iter] - cost_list[iter - 1]) / cost_list[iter]
+    else:
+        delta_L = 1
+
+    if cost_list[iter] <= 500:
+        if np.abs(delta_L) <= rho0:
+            r_next = np.max((r_current / 2, 0.002))
+        elif np.abs(delta_L) <= rho1:
+            r_next = np.max((r_current / 1.2, 0.02))
+        elif np.abs(delta_L) <= rho2:
+            r_next = np.max((r_current / 2.2, 0.02))
+        else:
+            r_next = np.max((r_current / 1.1, 0.02))
+    else:
+        r_next = r_default
+
+    return r_next
 
 
 # From quaternion to rotation matrix (123)
@@ -322,8 +363,23 @@ def attitude_plot(
     # zone1_vec[]
 
     # Plot the attitude history
+    nodes = np.zeros((8, 3, T))
+    axes = np.zeros((3, 8))
+    axes_t = np.zeros((3, 8))
+    axes[:, 0] = np.array([0.5, -0.2, 0.2])
+    axes[:, 1] = np.array([0.5, 0.2, 0.2])
+    axes[:, 2] = np.array([0.5, 0.2, -0.2])
+    axes[:, 3] = np.array([0.5, 0.2, -0.2])
+    axes[:, 4] = np.array([-0.5, -0.2, 0.2])
+    axes[:, 5] = np.array([-0.5, 0.2, 0.2])
+    axes[:, 6] = np.array([-0.5, 0.2, -0.2])
+    axes[:, 7] = np.array([-0.5, 0.2, -0.2])
+
     for t in range(T):
-        if np.mod(t, 10) == 0:
+        R = 
+        if np.mod(t, 2) == 0:
+            for j in range(8):
+                axes_t[:,j] =
             i = ib[:, t]
             j = jb[:, t]
             k = kb[:, t]
@@ -368,8 +424,8 @@ Iyy = 2
 Izz = 2
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
-euler_des = np.array([0, 20, 80])
-keep_out_att = np.array([0, 0, 40])
+euler_des = np.array([0.5, 25, 80.5])
+keep_out_att = np.array([0, 0.5, 40.3])
 half_angle = 30
 x_axis = np.array([1, 0, 0])
 zone_att_0 = np.array([0, keep_out_att[1] + half_angle, keep_out_att[2]])
@@ -402,7 +458,7 @@ if __name__ == "__main__":
     x_traj = np.zeros([n, T])
     x_traj[3, :] = np.ones(T)
     u_traj = np.zeros([3, T - 1])
-    # attitude_plot(euler_des, ib, jb, kb)
+    attitude_plot(euler_des, ib, jb, kb)
     [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
     S = np.zeros(T)
     for t in range(T - 1):
