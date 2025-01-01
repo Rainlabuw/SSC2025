@@ -228,14 +228,15 @@ def tra_gen(
         U_traj: np.ndarray,
         x_des: np.ndarray
 ) -> list:
-    iter = 9
+    iter = 3
+    iter = 11
     cost_list = np.zeros(iter)
     r = 1
     for i in range(iter):
         [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem(X_traj, U_traj, x_des, r, i)
         X_traj = X_traj + d_traj_val
         U_traj = U_traj + w_traj_val
-        print('Iteration:   ', i, '    Cost:   ', cost, '   Truest region:  ', r)
+        print('Iteration:   ', i, '    Cost:   ', cost, '   Trust region:  ', r)
         cost_list[i] = cost
         r = trust_region_update(cost_list, i, r)
 
@@ -312,6 +313,7 @@ def e2q(
 
 
 def attitude_plot(
+        x_traj: np.ndarray,
         euler_des: np.ndarray,
         ib: np.ndarray,
         jb: np.ndarray,
@@ -369,17 +371,42 @@ def attitude_plot(
     axes[:, 0] = np.array([0.5, -0.2, 0.2])
     axes[:, 1] = np.array([0.5, 0.2, 0.2])
     axes[:, 2] = np.array([0.5, 0.2, -0.2])
-    axes[:, 3] = np.array([0.5, 0.2, -0.2])
+    axes[:, 3] = np.array([0.5, -0.2, -0.2])
     axes[:, 4] = np.array([-0.5, -0.2, 0.2])
     axes[:, 5] = np.array([-0.5, 0.2, 0.2])
     axes[:, 6] = np.array([-0.5, 0.2, -0.2])
-    axes[:, 7] = np.array([-0.5, 0.2, -0.2])
+    axes[:, 7] = np.array([-0.5, -0.2, -0.2])
 
     for t in range(T):
-        R = 
         if np.mod(t, 2) == 0:
             for j in range(8):
-                axes_t[:,j] =
+                R_t = q2R(x_traj[3:, t])
+                axes_t[:, j] = axes[:, j] @ R_t
+
+            edge_1, = ax.plot([axes_t[0, 1], axes_t[0, 0]], [axes_t[1, 1], axes_t[1, 0]], [axes_t[2, 1], axes_t[2, 0]],
+                              'b')
+            edge_2, = ax.plot([axes_t[0, 2], axes_t[0, 1]], [axes_t[1, 2], axes_t[1, 1]], [axes_t[2, 2], axes_t[2, 1]],
+                              'b')
+            edge_3, = ax.plot([axes_t[0, 3], axes_t[0, 2]], [axes_t[1, 3], axes_t[1, 2]], [axes_t[2, 3], axes_t[2, 2]],
+                              'b')
+            edge_4, = ax.plot([axes_t[0, 0], axes_t[0, 3]], [axes_t[1, 0], axes_t[1, 3]], [axes_t[2, 0], axes_t[2, 3]],
+                              'b')
+            edge_5, = ax.plot([axes_t[0, 5], axes_t[0, 4]], [axes_t[1, 5], axes_t[1, 4]], [axes_t[2, 5], axes_t[2, 4]],
+                              'b')
+            edge_6, = ax.plot([axes_t[0, 6], axes_t[0, 5]], [axes_t[1, 6], axes_t[1, 5]], [axes_t[2, 6], axes_t[2, 5]],
+                              'b')
+            edge_7, = ax.plot([axes_t[0, 7], axes_t[0, 6]], [axes_t[1, 7], axes_t[1, 6]], [axes_t[2, 7], axes_t[2, 6]],
+                              'b')
+            edge_8, = ax.plot([axes_t[0, 4], axes_t[0, 7]], [axes_t[1, 4], axes_t[1, 7]], [axes_t[2, 4], axes_t[2, 7]],
+                              'b')
+            edge_9, = ax.plot([axes_t[0, 0], axes_t[0, 4]], [axes_t[1, 0], axes_t[1, 4]], [axes_t[2, 0], axes_t[2, 4]],
+                              'b')
+            edge_10, = ax.plot([axes_t[0, 1], axes_t[0, 5]], [axes_t[1, 1], axes_t[1, 5]], [axes_t[2, 1], axes_t[2, 5]],
+                              'b')
+            edge_11, = ax.plot([axes_t[0, 2], axes_t[0, 6]], [axes_t[1, 2], axes_t[1, 6]], [axes_t[2, 2], axes_t[2, 6]],
+                              'b')
+            edge_12, = ax.plot([axes_t[0, 3], axes_t[0, 7]], [axes_t[1, 3], axes_t[1, 7]], [axes_t[2, 3], axes_t[2, 7]],
+                              'b')
             i = ib[:, t]
             j = jb[:, t]
             k = kb[:, t]
@@ -403,6 +430,18 @@ def attitude_plot(
             plt.pause(0.1)
             if t < T - 10:
                 i_line.remove()
+                edge_1.remove()
+                edge_2.remove()
+                edge_3.remove()
+                edge_4.remove()
+                edge_5.remove()
+                edge_6.remove()
+                edge_7.remove()
+                edge_8.remove()
+                edge_9.remove()
+                edge_10.remove()
+                edge_11.remove()
+                edge_12.remove()
             j_line.remove()
             k_line.remove()
     # plt.clf()
@@ -415,13 +454,13 @@ def attitude_plot(
 
 
 Ts = 30  # 50 second
-dt = 0.1
+dt = 0.2
 T = int(Ts / dt)  # Total time steps
 
 # Assume symmetric cube
 Ixx = 1
-Iyy = 2
-Izz = 2
+Iyy = 3
+Izz = 3
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
 euler_des = np.array([0.5, 25, 80.5])
@@ -458,7 +497,7 @@ if __name__ == "__main__":
     x_traj = np.zeros([n, T])
     x_traj[3, :] = np.ones(T)
     u_traj = np.zeros([3, T - 1])
-    attitude_plot(euler_des, ib, jb, kb)
+    # attitude_plot(x_traj, euler_des, ib, jb, kb)
     [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
     S = np.zeros(T)
     for t in range(T - 1):
@@ -472,7 +511,7 @@ if __name__ == "__main__":
         # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
         S_t = body_vec.T @ zone_vec_center
         S[t] = S_t
-    attitude_plot(euler_des, ib, jb, kb)
+    attitude_plot(x_traj, euler_des, ib, jb, kb)
 
     time = np.linspace(0, Ts, T - 1)
     plt.subplot(3, 1, 1)
