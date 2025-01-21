@@ -87,7 +87,7 @@ def S_fun(
         [[1 - 2 * (q[2] * q[2] + q[3] * q[3]), 2 * (q[1] * q[2] - q[0] * q[3]), 2 * (q[1] * q[3] + q[0] * q[2])],
          [2 * (q[1] * q[2] + q[0] * q[3]), 1 - 2 * (q[1] * q[1] + q[3] * q[3]), 2 * (q[2] * q[3] - q[0] * q[1])],
          [2 * (q[1] * q[3] - q[0] * q[2]), 2 * (q[2] * q[3] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])]])
-    body_vec = R@np.array([1, 0, 0])
+    body_vec = R @ np.array([1, 0, 0])
 
     S = body_vec.T @ zone_vec_center - np.cos(half_angle * np.pi / 180)
     return S
@@ -290,13 +290,13 @@ def R_nb(
         delta: np.ndarray
 ) -> np.ndarray:
     if index <= 1:
-        R_y = np.array([[np.cos(delta), 0, np.sin(delta)],
+        R_y = np.array([[np.cos(delta[index]), 0, np.sin(delta[index])],
                         [0, 1, 0],
-                        [-np.sin(delta), 0, np.cos(delta)]])
+                        [-np.sin(delta[index]), 0, np.cos(delta[index])]])
         R = R_y
     else:
-        R_z = np.array([[np.cos(delta), -np.sin(delta), 0],
-                        [np.sin(delta), np.cos(delta), 0],
+        R_z = np.array([[np.cos(delta[index]), -np.sin(delta[index]), 0],
+                        [np.sin(delta[index]), np.cos(delta[index]), 0],
                         [0, 0, 1]])
         R = R_z
     return R
@@ -347,7 +347,8 @@ def attitude_plot(
         euler_des: np.ndarray,
         ib: np.ndarray,
         jb: np.ndarray,
-        kb: np.ndarray
+        kb: np.ndarray,
+        delta: np.ndarray
 ):
     # Create a sphere
     phi, theta = np.linspace(0, np.pi, 20), np.linspace(0, 2 * np.pi, 20)
@@ -411,17 +412,22 @@ def attitude_plot(
     axes[:, 6] = np.array([-l, w, -w])
     axes[:, 7] = np.array([-l, -w, -w])
     # For the wing
+    wing_center = np.zeros((3, 4))
+    wing_center[:, 0] = np.array([-l, -l, 0])
+    wing_center[:, 1] = np.array([-l, l, 0])
+    wing_center[:, 2] = np.array([-l, 0, l])
+    wing_center[:, 3] = np.array([-l, 0, -l])
     wing_all_node = np.zeros((3, 16))
     # wing 1
-    wing_all_node[:, 0] = np.array([-l + 0.5 * w, 2 * l, 0])
-    wing_all_node[:, 1] = np.array([-l - 0.5 * w, 2 * l, 0])
-    wing_all_node[:, 2] = np.array([-l + 0.5 * w, w, 0])
-    wing_all_node[:, 3] = np.array([-l - 0.5 * w, w, 0])
+    wing_all_node[:, 0] = np.array([-l + 0.5 * w, -2 * l, 0])
+    wing_all_node[:, 1] = np.array([-l - 0.5 * w, -2 * l, 0])
+    wing_all_node[:, 2] = np.array([-l + 0.5 * w, -w, 0])
+    wing_all_node[:, 3] = np.array([-l - 0.5 * w, -w, 0])
     # wing 2
-    wing_all_node[:, 4] = np.array([-l + 0.5 * w, -2 * l, 0])
-    wing_all_node[:, 5] = np.array([-l - 0.5 * w, -2 * l, 0])
-    wing_all_node[:, 6] = np.array([-l + 0.5 * w, -w, 0])
-    wing_all_node[:, 7] = np.array([-l - 0.5 * w, -w, 0])
+    wing_all_node[:, 4] = np.array([-l + 0.5 * w, 2 * l, 0])
+    wing_all_node[:, 5] = np.array([-l - 0.5 * w, 2 * l, 0])
+    wing_all_node[:, 6] = np.array([-l + 0.5 * w, w, 0])
+    wing_all_node[:, 7] = np.array([-l - 0.5 * w, w, 0])
     # wing 3
     wing_all_node[:, 8] = np.array([-l + 0.5 * w, 0, -2 * l])
     wing_all_node[:, 9] = np.array([-l - 0.5 * w, 0, -2 * l])
@@ -432,17 +438,90 @@ def attitude_plot(
     wing_all_node[:, 13] = np.array([-l - 0.5 * w, 0, 2 * l])
     wing_all_node[:, 14] = np.array([-l + 0.5 * w, 0, w])
     wing_all_node[:, 15] = np.array([-l - 0.5 * w, 0, w])
-
+    wing_all_node_t = np.zeros((3, 16))
     #################### Plotting animation
     for t in range(T):
+        delta_t = delta[:, t]
         R_t = q2R(x_traj[3:, t])
         if np.mod(t, 2) == 0:
             for j in range(8):
                 axes_t[:, j] = R_t @ axes[:, j]
 
             for k in range(16):
-                wing_all_node[:, k] = wing_all_node[:, k]
+                index = int(np.floor(k / 4))
+                R_wing = R_nb(index, delta_t)
+                wing_all_node_t[:, k] = R_wing @ R_t @ wing_all_node[:, k]
 
+            ## Plotting wings
+            # Wing 1
+            edge_wing_1_edge1, = ax.plot([wing_all_node_t[0, 1], wing_all_node_t[0, 0]],
+                                         [wing_all_node_t[1, 1], wing_all_node_t[1, 0]],
+                                         [wing_all_node_t[2, 1], wing_all_node_t[2, 0]],
+                                         'g')
+            edge_wing_1_edge2, = ax.plot([wing_all_node_t[0, 1], wing_all_node_t[0, 3]],
+                                         [wing_all_node_t[1, 1], wing_all_node_t[1, 3]],
+                                         [wing_all_node_t[2, 1], wing_all_node_t[2, 3]],
+                                         'g')
+            edge_wing_1_edge3, = ax.plot([wing_all_node_t[0, 3], wing_all_node_t[0, 2]],
+                                         [wing_all_node_t[1, 3], wing_all_node_t[1, 2]],
+                                         [wing_all_node_t[2, 3], wing_all_node_t[2, 2]],
+                                         'g')
+            edge_wing_1_edge4, = ax.plot([wing_all_node_t[0, 2], wing_all_node_t[0, 0]],
+                                         [wing_all_node_t[1, 2], wing_all_node_t[1, 0]],
+                                         [wing_all_node_t[2, 2], wing_all_node_t[2, 0]],
+                                         'g')
+            # Wing 2
+            edge_wing_2_edge1, = ax.plot([wing_all_node_t[0, 1 + 4], wing_all_node_t[0, 0 + 4]],
+                                         [wing_all_node_t[1, 1 + 4], wing_all_node_t[1, 0 + 4]],
+                                         [wing_all_node_t[2, 1 + 4], wing_all_node_t[2, 0 + 4]],
+                                         'g')
+            edge_wing_2_edge2, = ax.plot([wing_all_node_t[0, 1 + 4], wing_all_node_t[0, 3 + 4]],
+                                         [wing_all_node_t[1, 1 + 4], wing_all_node_t[1, 3 + 4]],
+                                         [wing_all_node_t[2, 1 + 4], wing_all_node_t[2, 3 + 4]],
+                                         'g')
+            edge_wing_2_edge3, = ax.plot([wing_all_node_t[0, 3 + 4], wing_all_node_t[0, 2 + 4]],
+                                         [wing_all_node_t[1, 3 + 4], wing_all_node_t[1, 2 + 4]],
+                                         [wing_all_node_t[2, 3 + 4], wing_all_node_t[2, 2 + 4]],
+                                         'g')
+            edge_wing_2_edge4, = ax.plot([wing_all_node_t[0, 2 + 4], wing_all_node_t[0, 0 + 4]],
+                                         [wing_all_node_t[1, 2 + 4], wing_all_node_t[1, 0 + 4]],
+                                         [wing_all_node_t[2, 2 + 4], wing_all_node_t[2, 0 + 4]],
+                                         'g')
+
+            # Wing 2
+            edge_wing_3_edge1, = ax.plot([wing_all_node_t[0, 1 + 4 + 4], wing_all_node_t[0, 0 + 4 + 4]],
+                                         [wing_all_node_t[1, 1 + 4 + 4], wing_all_node_t[1, 0 + 4 + 4]],
+                                         [wing_all_node_t[2, 1 + 4 + 4], wing_all_node_t[2, 0 + 4 + 4]],
+                                         'g')
+            edge_wing_3_edge2, = ax.plot([wing_all_node_t[0, 1 + 4 + 4], wing_all_node_t[0, 3 + 4 + 4]],
+                                         [wing_all_node_t[1, 1 + 4 + 4], wing_all_node_t[1, 3 + 4 + 4]],
+                                         [wing_all_node_t[2, 1 + 4 + 4], wing_all_node_t[2, 3 + 4 + 4]],
+                                         'g')
+            edge_wing_3_edge3, = ax.plot([wing_all_node_t[0, 3 + 4 + 4], wing_all_node_t[0, 2 + 4 + 4]],
+                                         [wing_all_node_t[1, 3 + 4 + 4], wing_all_node_t[1, 2 + 4 + 4]],
+                                         [wing_all_node_t[2, 3 + 4 + 4], wing_all_node_t[2, 2 + 4 + 4]],
+                                         'g')
+            edge_wing_3_edge4, = ax.plot([wing_all_node_t[0, 2 + 4 + 4], wing_all_node_t[0, 0 + 4 + 4]],
+                                         [wing_all_node_t[1, 2 + 4 + 4], wing_all_node_t[1, 0 + 4 + 4]],
+                                         [wing_all_node_t[2, 2 + 4 + 4], wing_all_node_t[2, 0 + 4 + 4]],
+                                         'g')
+            # Wing 2
+            edge_wing_4_edge1, = ax.plot([wing_all_node_t[0, 1 + 4 + 4 + 4], wing_all_node_t[0, 0 + 4 + 4 + 4]],
+                                         [wing_all_node_t[1, 1 + 4 + 4 + 4], wing_all_node_t[1, 0 + 4 + 4 + 4]],
+                                         [wing_all_node_t[2, 1 + 4 + 4 + 4], wing_all_node_t[2, 0 + 4 + 4 + 4]],
+                                         'g')
+            edge_wing_4_edge2, = ax.plot([wing_all_node_t[0, 1 + 4 + 4 + 4], wing_all_node_t[0, 3 + 4 + 4 + 4]],
+                                         [wing_all_node_t[1, 1 + 4 + 4 + 4], wing_all_node_t[1, 3 + 4 + 4 + 4]],
+                                         [wing_all_node_t[2, 1 + 4 + 4 + 4], wing_all_node_t[2, 3 + 4 + 4 + 4]],
+                                         'g')
+            edge_wing_4_edge3, = ax.plot([wing_all_node_t[0, 3 + 4 + 4 + 4], wing_all_node_t[0, 2 + 4 + 4 + 4]],
+                                         [wing_all_node_t[1, 3 + 4 + 4 + 4], wing_all_node_t[1, 2 + 4 + 4 + 4]],
+                                         [wing_all_node_t[2, 3 + 4 + 4 + 4], wing_all_node_t[2, 2 + 4 + 4 + 4]],
+                                         'g')
+            edge_wing_4_edge4, = ax.plot([wing_all_node_t[0, 2 + 4 + 4 + 4], wing_all_node_t[0, 0 + 4 + 4 + 4]],
+                                         [wing_all_node_t[1, 2 + 4 + 4 + 4], wing_all_node_t[1, 0 + 4 + 4 + 4]],
+                                         [wing_all_node_t[2, 2 + 4 + 4 + 4], wing_all_node_t[2, 0 + 4 + 4 + 4]],
+                                         'g')
             ## Satellite body edges
             edge_1, = ax.plot([axes_t[0, 1], axes_t[0, 0]], [axes_t[1, 1], axes_t[1, 0]], [axes_t[2, 1], axes_t[2, 0]],
                               'b')
@@ -468,7 +547,6 @@ def attitude_plot(
                                'b')
             edge_12, = ax.plot([axes_t[0, 3], axes_t[0, 7]], [axes_t[1, 3], axes_t[1, 7]], [axes_t[2, 3], axes_t[2, 7]],
                                'b')
-            ## Wing edges
 
             i = ib[:, t]
             j = jb[:, t]
@@ -492,6 +570,25 @@ def attitude_plot(
             ax.set_zlabel('Z')
             plt.pause(0.1)
             if t < T - 2:
+                ## Remove excessive lines
+                # Remove wing edges
+                edge_wing_1_edge1.remove()
+                edge_wing_1_edge2.remove()
+                edge_wing_1_edge3.remove()
+                edge_wing_1_edge4.remove()
+                edge_wing_2_edge1.remove()
+                edge_wing_2_edge2.remove()
+                edge_wing_2_edge3.remove()
+                edge_wing_2_edge4.remove()
+                edge_wing_3_edge1.remove()
+                edge_wing_3_edge2.remove()
+                edge_wing_3_edge3.remove()
+                edge_wing_3_edge4.remove()
+                edge_wing_4_edge1.remove()
+                edge_wing_4_edge2.remove()
+                edge_wing_4_edge3.remove()
+                edge_wing_4_edge4.remove()
+                # Remove body edges
                 i_line.remove()
                 edge_1.remove()
                 edge_2.remove()
@@ -528,6 +625,7 @@ Izz = 3
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
 euler_des = np.array([0.5, 25, 80.5])
+# euler_des = np.array([0.5, 0, 0.5])
 keep_out_att = np.array([0, 0.5, 40.3])
 half_angle = 30
 x_axis = np.array([1, 0, 0])
@@ -580,6 +678,8 @@ if __name__ == "__main__":
     q = np.zeros((4, T))
     omega = np.zeros((3, T))
     q[:, 0] = np.array([1, 0, 0, 0])
+    delta = np.zeros((4, T))  # Deflection angle for wings
+    # delta[0, :] = np.pi / 4
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
@@ -595,7 +695,7 @@ if __name__ == "__main__":
     x_traj = np.zeros([n, T])
     x_traj[3, :] = np.ones(T)
     u_traj = np.zeros([3, T - 1])
-    # attitude_plot(x_traj, euler_des, ib, jb, kb)
+    # attitude_plot(x_traj, euler_des, ib, jb, kb,delta)
     [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
     S = np.zeros(T)
     for t in range(T - 1):
@@ -609,7 +709,7 @@ if __name__ == "__main__":
         # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
         S_t = body_vec.T @ zone_vec_center
         S[t] = S_t
-    attitude_plot(x_traj, euler_des, ib, jb, kb)
+    attitude_plot(x_traj, euler_des, ib, jb, kb, delta)
 
     time = np.linspace(0, Ts, T - 1)
     plt.subplot(3, 1, 1)
