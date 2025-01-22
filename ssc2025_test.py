@@ -32,6 +32,99 @@ def f_continuous(
     return x_dot
 
 
+#
+def f_continuous_aero(
+        x_t: np.ndarray,
+        delta_t: np.ndarray
+) -> np.ndarray:
+    # Rotation matrix from body to LVLH
+    R_t = q2R(x_traj[3:, t])
+
+    # Torque arm
+    la = np.zeros((3, 10))
+    la[:, 0] = np.array([-length, -1.5 * length, 0])
+    la[:, 1] = np.array([-length, 1.5 * length, 0])
+    la[:, 2] = np.array([-length, 0, 1.5 * length])
+    la[:, 3] = np.array([-length, 0, -1.5 * length])
+
+    la[:, 4] = np.array([length, 0, 0])
+    la[:, 5] = np.array([-length, 0, 0])
+
+    la[:, 6] = np.array([0, -width, 0])
+    la[:, 7] = np.array([0, width, 0])
+
+    la[:, 8] = np.array([0, 0, width])
+    la[:, 9] = np.array([0, 0, -width])
+
+    ############# Surface normals in wing and body frame
+    surf_normal = np.zeros((3, 14))
+    # For wings
+    surf_normal[:, 0] = np.array([0, 0, 1])
+    surf_normal[:, 1] = np.array([0, 0, -1])
+
+    surf_normal[:, 2] = np.array([0, 0, 1])
+    surf_normal[:, 3] = np.array([0, 0, -1])
+
+    surf_normal[:, 4] = np.array([0, -1, 0])
+    surf_normal[:, 5] = np.array([0, 1, 0])
+
+    surf_normal[:, 6] = np.array([0, -1, 0])
+    surf_normal[:, 7] = np.array([0, 1, 0])
+
+    # For main body
+    surf_normal[:, 8] = np.array([1, 0, 0])
+    surf_normal[:, 9] = np.array([-1, 0, 0])
+
+    surf_normal[:, 10] = np.array([0, -1, 0])
+    surf_normal[:, 11] = np.array([0, 1, 0])
+
+    surf_normal[:, 12] = np.array([0, 0, 1])
+    surf_normal[:, 13] = np.array([0, 0, -1])
+
+    ## Surface normals in wing and LVLH frame
+    surf_normal_LVLH = np.zeros((3, 14))
+    for i in range(8):
+        wing_index = int(np.floor(i / 2))
+        R_wing = R_nb(wing_index, delta_t)
+        surf_normal_LVLH[:, i] = R_wing @ R_t @ surf_normal[:, i]
+    for i in range(4):
+        surf_normal_LVLH[:, i] = R_t @ surf_normal[:, i]
+
+    ## Find u_t
+    # Find the angle between the x-axis and the surface normals in the LVLH frame
+    cosine_list = np.zeros(14)
+    x_axis = np.array([1, 0, 0])
+    for i in range(14):
+        x = np.dot(surf_normal[i], x_axis)
+        condlist = [x < 0, x >= 0]
+        choicelist = [0, x]
+        cosine_list = np.select(condlist, choicelist)
+
+    # Find the force acting on each surface
+    L_t = np.zeros((3, 14))  ## Lift acting on each surface
+    for i in range[14]:
+
+
+
+
+    omega_t = x_t[0:3]
+    q_t = x_t[3:]
+    p = np.zeros(4)
+    p[1:] = omega_t
+    Omega = np.array([[p[0], -p[1], -p[2], -p[3]],
+                      [p[1], p[0], p[3], -p[2]],
+                      [p[2], -p[3], p[0], p[1]],
+                      [p[3], p[2], -p[1], p[0]]])
+
+    omegadot_t = LA.inv(J) @ (u_t - np.cross(omega_t, (J @ omega_t)))
+    qdot_t = 0.5 * Omega @ q_t
+    # qdot_t = np.zeros(4)
+
+    x_dot = np.concatenate((omegadot_t, qdot_t), 0)
+
+    return x_dot
+
+
 def f_discretized(
         x_t: np.ndarray,
         u_t: np.ndarray
@@ -302,7 +395,7 @@ def R_nb(
     return R
 
 
-# From quaternion to rotation matrix (123)
+# From quaternion to rotation matrix from body frame to LVLH (123)
 def q2R(
         q: np.ndarray
 ) -> np.ndarray:
@@ -413,14 +506,14 @@ def attitude_plot(
     axes[:, 7] = np.array([-l, -w, -w])
     # For the wing
     wing_center = np.zeros((3, 8))
-    wing_center[:, 0] = np.array([-l, -2 * l-0.5*w, 0])
-    wing_center[:, 1] = np.array([-l, -0.5*w, 0])
-    wing_center[:, 2] = np.array([-l, 2 * l+0.5*w, 0])
-    wing_center[:, 3] = np.array([-l, 0.5*w, 0])
-    wing_center[:, 4] = np.array([-l, 0, 2 * l+0.5*w])
-    wing_center[:, 5] = np.array([-l, 0, +0.5*w])
-    wing_center[:, 6] = np.array([-l, 0, -2 * l-0.5*w])
-    wing_center[:, 7] = np.array([-l, 0, -0.5*w])
+    wing_center[:, 0] = np.array([-l, -2 * l - 0.5 * w, 0])
+    wing_center[:, 1] = np.array([-l, -0.5 * w, 0])
+    wing_center[:, 2] = np.array([-l, 2 * l + 0.5 * w, 0])
+    wing_center[:, 3] = np.array([-l, 0.5 * w, 0])
+    wing_center[:, 4] = np.array([-l, 0, 2 * l + 0.5 * w])
+    wing_center[:, 5] = np.array([-l, 0, +0.5 * w])
+    wing_center[:, 6] = np.array([-l, 0, -2 * l - 0.5 * w])
+    wing_center[:, 7] = np.array([-l, 0, -0.5 * w])
     wing_all_node = np.zeros((3, 16))
     # wing 1
     # wing_all_node[:, 0] = np.array([-l + 0.5 * w, -2 * l, 0])
@@ -466,7 +559,7 @@ def attitude_plot(
                     node_index = center_count * 2 + wing_node
                     wing_index = int(np.floor(center_count / 2))
                     R_node = R_nb(wing_index, delta_t)
-                    wing_all_node_t[:, node_index] = R_t@R_node   @ wing_all_node[:, node_index] + wing_center_t[:,
+                    wing_all_node_t[:, node_index] = R_t @ R_node @ wing_all_node[:, node_index] + wing_center_t[:,
                                                                                                    center_count]
 
             ## Plotting wings
@@ -657,36 +750,6 @@ zone_vec_center = q2R(zone_q_center) @ x_axis
 width = 0.05
 length = 0.15
 
-# Torque arm
-la = np.zeros((3, 10))
-la[:, 0] = np.array([-length, 1.5 * length, 0])
-la[:, 1] = np.array([-length, -1.5 * length, 0])
-la[:, 2] = np.array([-length, 0, -1.5 * length])
-la[:, 3] = np.array([-length, 0, 1.5 * length])
-la[:, 4] = np.array([length, 0, 0])
-la[:, 5] = np.array([-length, 0, 0])
-la[:, 6] = np.array([0, width, 0])
-la[:, 7] = np.array([0, -width, 0])
-la[:, 8] = np.array([0, 0, width])
-la[:, 9] = np.array([0, 0, -width])
-
-# Surface normals
-surf_normal = np.zeros((3, 14))
-surf_normal[:, 0] = np.array([0, 0, 1])
-surf_normal[:, 1] = np.array([0, 0, -1])
-surf_normal[:, 2] = np.array([0, 0, 1])
-surf_normal[:, 3] = np.array([0, 0, -1])
-surf_normal[:, 4] = np.array([0, 1, 0])
-surf_normal[:, 5] = np.array([0, -1, 0])
-surf_normal[:, 6] = np.array([0, 1, 0])
-surf_normal[:, 7] = np.array([0, -1, 0])
-surf_normal[:, 8] = np.array([1, 0, 0])
-surf_normal[:, 9] = np.array([-1, 0, 0])
-surf_normal[:, 10] = np.array([0, 1, 0])
-surf_normal[:, 11] = np.array([0, -1, 0])
-surf_normal[:, 12] = np.array([0, 0, 1])
-surf_normal[:, 13] = np.array([0, 0, -1])
-
 q_des = e2q(euler_des)
 omega_des = np.zeros(3)
 x_des = np.concatenate((omega_des, q_des), 0)
@@ -696,10 +759,10 @@ if __name__ == "__main__":
     omega = np.zeros((3, T))
     q[:, 0] = np.array([1, 0, 0, 0])
     delta = np.zeros((4, T))  # Deflection angle for wings
-    # delta[0, :] = np.pi / 4
-    # delta[1, :] = -np.pi / 3
-    # delta[2, :] = np.pi / 4
-    # delta[3, :] = -np.pi / 3
+    delta[0, :] = np.pi / 4
+    delta[1, :] = -np.pi / 3
+    delta[2, :] = np.pi / 4
+    delta[3, :] = -np.pi / 3
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
