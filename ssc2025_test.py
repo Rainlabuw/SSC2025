@@ -412,33 +412,42 @@ def attitude_plot(
     axes[:, 6] = np.array([-l, w, -w])
     axes[:, 7] = np.array([-l, -w, -w])
     # For the wing
-    wing_center = np.zeros((3, 4))
-    wing_center[:, 0] = np.array([-l, -l, 0])
-    wing_center[:, 1] = np.array([-l, l, 0])
-    wing_center[:, 2] = np.array([-l, 0, l])
-    wing_center[:, 3] = np.array([-l, 0, -l])
+    wing_center = np.zeros((3, 8))
+    wing_center[:, 0] = np.array([-l, -2 * l-0.5*w, 0])
+    wing_center[:, 1] = np.array([-l, -0.5*w, 0])
+    wing_center[:, 2] = np.array([-l, 2 * l+0.5*w, 0])
+    wing_center[:, 3] = np.array([-l, 0.5*w, 0])
+    wing_center[:, 4] = np.array([-l, 0, 2 * l+0.5*w])
+    wing_center[:, 5] = np.array([-l, 0, +0.5*w])
+    wing_center[:, 6] = np.array([-l, 0, -2 * l-0.5*w])
+    wing_center[:, 7] = np.array([-l, 0, -0.5*w])
     wing_all_node = np.zeros((3, 16))
     # wing 1
-    wing_all_node[:, 0] = np.array([-l + 0.5 * w, -2 * l, 0])
-    wing_all_node[:, 1] = np.array([-l - 0.5 * w, -2 * l, 0])
-    wing_all_node[:, 2] = np.array([-l + 0.5 * w, -w, 0])
-    wing_all_node[:, 3] = np.array([-l - 0.5 * w, -w, 0])
+    # wing_all_node[:, 0] = np.array([-l + 0.5 * w, -2 * l, 0])
+    # wing_all_node[:, 1] = np.array([-l - 0.5 * w, -2 * l, 0])
+    # wing_all_node[:, 2] = np.array([-l + 0.5 * w, -w, 0])
+    # wing_all_node[:, 3] = np.array([-l - 0.5 * w, -w, 0])
+    wing_all_node[:, 0] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 1] = np.array([-0.5 * w, 0, 0])
+    wing_all_node[:, 2] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 3] = np.array([- 0.5 * w, 0, 0])
     # wing 2
-    wing_all_node[:, 4] = np.array([-l + 0.5 * w, 2 * l, 0])
-    wing_all_node[:, 5] = np.array([-l - 0.5 * w, 2 * l, 0])
-    wing_all_node[:, 6] = np.array([-l + 0.5 * w, w, 0])
-    wing_all_node[:, 7] = np.array([-l - 0.5 * w, w, 0])
+    wing_all_node[:, 4] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 5] = np.array([- 0.5 * w, 0, 0])
+    wing_all_node[:, 6] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 7] = np.array([- 0.5 * w, 0, 0])
     # wing 3
-    wing_all_node[:, 8] = np.array([-l + 0.5 * w, 0, -2 * l])
-    wing_all_node[:, 9] = np.array([-l - 0.5 * w, 0, -2 * l])
-    wing_all_node[:, 10] = np.array([-l + 0.5 * w, 0, -w])
-    wing_all_node[:, 11] = np.array([-l - 0.5 * w, 0, -w])
+    wing_all_node[:, 8] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 9] = np.array([- 0.5 * w, 0, 0])
+    wing_all_node[:, 10] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 11] = np.array([- 0.5 * w, 0, 0])
     # wing 4
-    wing_all_node[:, 12] = np.array([-l + 0.5 * w, 0, 2 * l])
-    wing_all_node[:, 13] = np.array([-l - 0.5 * w, 0, 2 * l])
-    wing_all_node[:, 14] = np.array([-l + 0.5 * w, 0, w])
-    wing_all_node[:, 15] = np.array([-l - 0.5 * w, 0, w])
-    wing_all_node_t = np.zeros((3, 16))
+    wing_all_node[:, 12] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 13] = np.array([- 0.5 * w, 0, 0])
+    wing_all_node[:, 14] = np.array([0.5 * w, 0, 0])
+    wing_all_node[:, 15] = np.array([- 0.5 * w, 0, 0])
+    wing_all_node_t = np.zeros((3, 16))  # this is the reference node for wing with no rotation
+    wing_center_t = np.zeros((3, 8))
     #################### Plotting animation
     for t in range(T):
         delta_t = delta[:, t]
@@ -447,10 +456,18 @@ def attitude_plot(
             for j in range(8):
                 axes_t[:, j] = R_t @ axes[:, j]
 
-            for k in range(16):
-                index = int(np.floor(k / 4))
-                R_wing = R_nb(index, delta_t)
-                wing_all_node_t[:, k] = R_wing @ R_t @ wing_all_node[:, k]
+            # for k in range(16):
+            #     index = int(np.floor(k / 4))
+            #     R_wing = R_nb(index, delta_t)
+            #     wing_all_node_t[:, k] = R_wing @ R_t @ wing_all_node[:, k]
+            for center_count in range(8):
+                wing_center_t[:, center_count] = R_t @ wing_center[:, center_count]
+                for wing_node in range(2):
+                    node_index = center_count * 2 + wing_node
+                    wing_index = int(np.floor(center_count / 2))
+                    R_node = R_nb(wing_index, delta_t)
+                    wing_all_node_t[:, node_index] = R_t@R_node   @ wing_all_node[:, node_index] + wing_center_t[:,
+                                                                                                   center_count]
 
             ## Plotting wings
             # Wing 1
@@ -470,7 +487,7 @@ def attitude_plot(
                                          [wing_all_node_t[1, 2], wing_all_node_t[1, 0]],
                                          [wing_all_node_t[2, 2], wing_all_node_t[2, 0]],
                                          'g')
-            # Wing 2
+            # # # Wing 2
             edge_wing_2_edge1, = ax.plot([wing_all_node_t[0, 1 + 4], wing_all_node_t[0, 0 + 4]],
                                          [wing_all_node_t[1, 1 + 4], wing_all_node_t[1, 0 + 4]],
                                          [wing_all_node_t[2, 1 + 4], wing_all_node_t[2, 0 + 4]],
@@ -680,6 +697,9 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     delta = np.zeros((4, T))  # Deflection angle for wings
     # delta[0, :] = np.pi / 4
+    # delta[1, :] = -np.pi / 3
+    # delta[2, :] = np.pi / 4
+    # delta[3, :] = -np.pi / 3
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
