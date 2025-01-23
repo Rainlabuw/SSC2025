@@ -98,13 +98,16 @@ def f_continuous_aero(
     cosine_list = np.zeros(14)
     x_axis = np.array([1, 0, 0])
     for i in range(14):
-        x = np.dot(surf_normal[i], x_axis)
+        if i <= 7:
+            x = np.dot(surf_normal_wing_body[:, i], x_axis)
+        else:
+            x = np.dot(surf_normal[:,i], x_axis)
         condlist = [x < 0, x >= 0]
         choicelist = [0, x]
-        cosine_list = np.select(condlist, choicelist)
+        cosine_list[i] = np.select(condlist, choicelist)
 
     # Find the force acting on each surface
-    dynamic_pressure = 10
+    dynamic_pressure = 0.1
     L_t = np.zeros((3, 14))  ## Lift acting on each surface
     areas = np.zeros(14)
     for i in range(8):
@@ -116,8 +119,9 @@ def f_continuous_aero(
 
     for i in range(8):
         wing_index = int(np.floor(i / 2))
-        u_t = u_t + np.cross(la[:, wing_index], L_t[:, i])
+        u_t = u_t + np.cross(L_t[:, i],la[:, wing_index])
 
+    print(u_t)
     omega_t = x_t[0:3]
     q_t = x_t[3:]
     p = np.zeros(4)
@@ -824,9 +828,9 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     delta = np.zeros((4, T))  # Deflection angle for wings
     delta[0, :] = np.pi / 4
-    delta[1, :] = -np.pi / 3
-    delta[2, :] = np.pi / 4
-    delta[3, :] = -np.pi / 3
+    delta[1, :] = -np.pi / 4
+    # delta[2, :] = np.pi / 2
+    # delta[3, :] = np.pi / 2
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
@@ -844,6 +848,7 @@ if __name__ == "__main__":
     u_traj = np.zeros([3, T - 1])
 
     for t in range(T - 1):
+        delta_t = delta[:, t]
         x_t = x_traj[:, t]
         u_t = u[:, t]
         q_t = x_t[3:] / LA.norm(x_t[3:], 2)
@@ -851,12 +856,13 @@ if __name__ == "__main__":
         A = np.asarray(A)
         B = np.asarray(B)
         # Continuous
-        x_dot = f_continuous(x_t, u_t)
+        # x_dot = f_continuous(x_t, u_t)
+        x_dot = f_continuous_aero(x_t, delta_t)
         # Linearized
         # x_dot_ja = A @ x_t + B @ u_t
         # Discretized
         # [Ad, Bd] = discretization(A, B)
-        x_tp1 = x_t + x_dot * dt # Continuous
+        x_tp1 = x_t + x_dot * dt  # Continuous
         # x_tp1 = x_t + x_dot_ja * dt # Continuous and linearized
         # x_tp1 = Ad @ x_t + Bd @ u_t  # Discretized
         x_traj[:, t + 1] = x_tp1
