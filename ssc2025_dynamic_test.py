@@ -149,6 +149,15 @@ def f_discretized(
     return x_tp1
 
 
+def f_discretized_aero(
+        x_t: np.ndarray,
+        delta_t: np.ndarray
+) -> np.ndarray:
+    x_dot = f_continuous_aero(x_t, delta_t)
+    x_tp1 = x_t + x_dot * dt
+    return x_tp1
+
+
 def f_jax(
         x: jnp.ndarray,
         u: jnp.ndarray
@@ -227,23 +236,17 @@ def f_jax_aero(
     ## Surface normals of wings in body frame
     surf_normal_wing_body = jnp.zeros((3, 8))
 
-
-
-
-
     for i in range(8):
         wing_index = int(np.floor(i / 2))
 
         if wing_index <= 1:
             R_wing = jnp.array([[jnp.cos(delta_t[wing_index]), 0, jnp.sin(delta_t[wing_index])],
-                       [0, 1, 0],
-                       [-jnp.sin(delta_t[wing_index]), 0, jnp.cos(delta_t[wing_index])]])
+                                [0, 1, 0],
+                                [-jnp.sin(delta_t[wing_index]), 0, jnp.cos(delta_t[wing_index])]])
         else:
             R_wing = jnp.array([[jnp.cos(delta_t[wing_index]), -jnp.sin(delta_t[wing_index]), 0],
-                             [jnp.sin(delta_t[wing_index]), jnp.cos(delta_t[wing_index]), 0],
-                             [0, 0, 1]])
-
-
+                                [jnp.sin(delta_t[wing_index]), jnp.cos(delta_t[wing_index]), 0],
+                                [0, 0, 1]])
 
         # R_wing = R_nb_jax(wing_index, delta_t)
         # surf_normal_wing_body[:, i] = R_wing @ surf_normal[:, i]
@@ -395,7 +398,7 @@ def discretization_aero(
         B: np.ndarray
 ) -> list:
     C = np.eye(7)
-    D = np.zeros((7, 3))
+    D = np.zeros((7, 4))
     sys = signal.StateSpace(A, B, C, D)
     sysd = sys.to_discrete(dt)
     Ad = sysd.A
@@ -411,7 +414,7 @@ def sub_problem_cost_fun(
         s: cp.Variable,
         U_traj: np.ndarray
 ):
-    sub_problem_cost = lambda_param * cp.norm(((U_traj + w)), 1) + 1 * lambda_param * cp.sum(
+    sub_problem_cost = 0*lambda_param * cp.norm(((U_traj + w)), 1) + 10 * lambda_param * cp.sum(
         cp.sum(cp.abs(v))) + 1 * lambda_param * cp.sum(cp.pos(s))
     return sub_problem_cost
 
@@ -495,13 +498,86 @@ def solve_convex_optimal_control_subproblem(
     return cost, d_traj_val, w_traj_val
 
 
+def solve_convex_optimal_control_subproblem_aero(
+        X_traj: np.ndarray,
+        delta_traj: np.ndarray,
+        dSdx: np.ndarray,
+        x_des: np.ndarray,
+        r: np.ndarray,
+        i: int
+) -> list:
+    # r = 0.2
+    lambda_param = 10000
+    # Define variables for optimization
+    w = cp.Variable((4, T - 1))
+    v = cp.Variable((n, T - 1))
+    d = cp.Variable((n, T))
+    s = cp.Variable(T)
+    constraints = [d[:, 0] == np.zeros(7)]
+    E = np.eye(7)
+    sup_problem_cost = sub_problem_cost_fun(lambda_param, w, v, s, delta_traj)
+    S = np.zeros(T)
+    for t in range(T - 1):
+        x_t = X_traj[:, t]
+        x_tp1 = X_traj[:, t + 1]
+        d_t = d[:, t]
+        d_tp1 = d[:, t + 1]
+        delta_t = delta_traj[:, t]
+        w_t = w[:, t]
+        v_t = v[:, t]
+        [A, B] = linearize_aero(f_jax_aero, x_t, delta_t)
+        [Ad, Bd] = discretization_aero(A, B)
+        # [dSdx, dSdu] = S_linearize(S_continuous, x_t, u_t)
+
+        # Dynamic constraints
+        constraints.append(
+            x_tp1 + d_tp1 ==
+            f_discretized_aero(x_t, delta_t) +
+            Ad @ d_t + Bd @ w_t + 1 * E @ v_t)
+        constraints.append(cp.abs(w_t) <= r)
+        for wing in range(4):
+            constraints.append(cp.abs(delta_t[wing] + w_t[wing]) <= 3.1415 / 4.2)
+        # if i <= 0:
+        #     constraints.append(
+        #         x_tp1 + d_tp1 ==
+        #         f_discretized_aero(x_t, delta_t) +
+        #         Ad @ d_t + Bd @ w_t + 1 * E @ v_t)
+        #     constraints.append(cp.abs(w_t) <= r)
+        # else:
+        #     constraints.append(
+        #         x_tp1 + d_tp1 ==
+        #         f_discretized_aero(x_t, delta_t) +
+        #         Ad @ d_t + Bd @ w_t + 0 * E @ v_t)
+        #     constraints.append(cp.abs(w_t) <= r)
+        #     # Keep out zone constraints
+        #     # S_t = S_fun(x_t)
+        #     # S[t] = S_t
+        #     # dSdx_t = np.asarray(dSdx)
+        #     # # dSdu = np.asarray(dSdu)
+        #     # dSdx_t = dSdx[:, t]
+        #     # constraints.append(S_t + dSdx_t @ d_t <= s[t])
+        #     # constraints.append(s[t] >= 0)
+
+    # Terminal condition
+    # constraints.append(X_traj[:, T - 1] + d[:, T - 1] == np.array(
+    #     [x_des[0], x_des[1], x_des[2], x_des[3], x_des[4], x_des[5], x_des[6]]))
+    constraints.append(X_traj[3:, T - 1] + d[3:, T - 1] == np.array([x_des[3], x_des[4], x_des[5], x_des[6]]))
+    # Define the problem
+    problem = cp.Problem(cp.Minimize(sup_problem_cost), constraints)
+    problem.solve(solver=cp.CLARABEL)
+    cost = problem.value
+    w_traj_val = w.value
+    d_traj_val = d.value
+    return cost, d_traj_val, w_traj_val
+
+
 def tra_gen(
         X_traj: np.ndarray,
         U_traj: np.ndarray,
         x_des: np.ndarray
 ) -> list:
     # iter = 0
-    iter = 1
+    iter = 11
     cost_list = np.zeros(iter)
     r = 1
     dSdx = np.zeros((n, T))
@@ -525,6 +601,37 @@ def tra_gen(
     return X_traj, U_traj
 
 
+def tra_gen_aero(
+        X_traj: np.ndarray,
+        delta_traj: np.ndarray,
+        x_des: np.ndarray
+) -> list:
+    # iter = 0
+    iter = 3
+    cost_list = np.zeros(iter)
+    r = 2
+    dSdx = np.zeros((n, T))
+    for i in range(iter):
+
+        # for linearization
+        for t in range(T - 1):
+            x_t = X_traj[:, t]
+            delta_t = delta_traj[:, t]
+            [dSdx_t, dSdu_t] = S_linearize(S_continuous, x_t, delta_t)
+            dSdx[:, t] = np.asarray(dSdx_t)
+
+        [cost, d_traj_val, w_traj_val] = solve_convex_optimal_control_subproblem_aero(X_traj, delta_traj, dSdx, x_des,
+                                                                                      r, i)
+        X_traj = X_traj + d_traj_val
+        delta_traj = delta_traj + w_traj_val
+
+        print('Iteration:   ', i, '    Cost:   ', cost, '   Trust region:  ', r)
+        cost_list[i] = cost
+        r = trust_region_update(cost_list, i, r)
+
+    return X_traj, delta_traj
+
+
 def trust_region_update(
         cost_list: np.ndarray,
         iter: int,
@@ -533,7 +640,7 @@ def trust_region_update(
     rho0 = 0.1
     rho1 = 0.25
     rho2 = 0.7
-    r_default = 0.5
+    r_default = 1.5
     if iter >= 1:
         delta_L = (cost_list[iter] - cost_list[iter - 1]) / cost_list[iter]
     else:
@@ -928,8 +1035,8 @@ def attitude_plot(
 #########Global vriabls
 
 
-Ts = 30  # 50 second
-dt = 0.5
+Ts = 60  # 50 second
+dt = 1
 T = int(Ts / dt)  # Total time steps
 
 # Assume symmetric cube
@@ -938,7 +1045,7 @@ Iyy = 3
 Izz = 3
 J = np.array([[Ixx, 0, 0], [0, Iyy, 0], [0, 0, Izz]])
 n = 7
-euler_des = np.array([0.5, 25, 80.5])
+euler_des = np.array([30, -20, 15])
 # euler_des = np.array([0.5, 0, 0.5])
 keep_out_att = np.array([0, 0.5, 40.3])
 half_angle = 30
@@ -958,21 +1065,16 @@ q_des = e2q(euler_des)
 omega_des = np.zeros(3)
 x_des = np.concatenate((omega_des, q_des), 0)
 if __name__ == "__main__":
-
+    ################################# Active aerodynamic control case
     q = np.zeros((4, T))
     omega = np.zeros((3, T))
     q[:, 0] = np.array([1, 0, 0, 0])
     delta = np.zeros((4, T))  # Deflection angle for wings
-    delta[0, :] = np.pi / 4
-    delta[1, :] = -np.pi / 4
-    # delta[2, :] = np.pi / 4
-    # delta[3, :] = -np.pi / 3
+    delta[0, :] = np.pi / 5
+    delta[1, :] = -np.pi / 5
+    delta[2, :] = np.pi / 5
+    delta[3, :] = -np.pi / 5
     x = np.concatenate((omega, q), 0)
-    u = np.zeros((3, T - 1))
-    u[0, :] = 0.001 * np.ones(T - 1)
-    u[2, :] = 0.00 * np.ones(T - 1)
-    u[1, :] = 0.00 * np.ones(T - 1)
-    p = np.array([0, -0.001, 0.00, 0.00])
     ib = np.zeros((3, T))
     jb = np.zeros((3, T))
     kb = np.zeros((3, T))
@@ -981,36 +1083,86 @@ if __name__ == "__main__":
     kb[:, 0] = np.array([0, 0, 1])
     x_traj = np.zeros([n, T])
     x_traj[3, :] = np.ones(T)
+    delta_traj = np.zeros([4, T - 1])
+
+    # attitude_plot(x_traj, euler_des, ib, jb, kb,delta)
+    [x_traj, delta_traj] = tra_gen_aero(x_traj, delta_traj, x_des)
+    S = np.zeros(T)
+    for t in range(T - 1):
+        q_t = x_traj[3:, t]
+        R = q2R(q_t)
+        ib[:, t] = R @ ib[:, 0]
+        jb[:, t] = R @ jb[:, 0]
+        kb[:, t] = R @ kb[:, 0]
+
+        body_vec = q2R(x_traj[3:, t]) @ np.array([1, 0, 0])
+        # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
+        S_t = body_vec.T @ zone_vec_center
+        S[t] = S_t
+    attitude_plot(x_traj, euler_des, ib, jb, kb, delta)
+
+    time = np.linspace(0, Ts, T - 1)
+    plt.subplot(4, 1, 1)
+    plt.plot(time, delta_traj[0, :])
+
+    plt.subplot(4, 1, 2)
+    plt.plot(time, delta_traj[1, :])
+
+    plt.subplot(4, 1, 3)
+    plt.plot(time, delta_traj[2, :])
+
+
+    plt.subplot(4, 1, 4)
+    plt.plot(time, delta_traj[3, :])
+    plt.show()
+    ################################ Reaction wheel case
+    q = np.zeros((4, T))
+    omega = np.zeros((3, T))
+    q[:, 0] = np.array([1, 0, 0, 0])
+    delta = np.zeros((4, T))  # Deflection angle for wings
+    # delta[0, :] = np.pi / 4
+    # delta[1, :] = -np.pi / 4
+    # delta[2, :] = np.pi / 4
+    # delta[3, :] = -np.pi / 3
+    x = np.concatenate((omega, q), 0)
+    ib = np.zeros((3, T))
+    jb = np.zeros((3, T))
+    kb = np.zeros((3, T))
+    ib[:, 0] = np.array([1, 0, 0])
+    jb[:, 0] = np.array([0, 1, 0])
+    kb[:, 0] = np.array([0, 0, 1])
+    x_traj = np.zeros([n, T])
+    x_traj[3, :] = np.ones(T)
+    delta_traj = np.zeros([3, T - 1])
     u_traj = np.zeros([3, T - 1])
     # attitude_plot(x_traj, euler_des, ib, jb, kb,delta)
-    # [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
-    # S = np.zeros(T)
-    # for t in range(T - 1):
-    #     q_t = x_traj[3:, t]
-    #     R = q2R(q_t)
-    #     ib[:, t] = R @ ib[:, 0]
-    #     jb[:, t] = R @ jb[:, 0]
-    #     kb[:, t] = R @ kb[:, 0]
-    #
-    #     body_vec = q2R(x_traj[3:, t]) @ np.array([1, 0, 0])
-    #     # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
-    #     S_t = body_vec.T @ zone_vec_center
-    #     S[t] = S_t
-    # attitude_plot(x_traj, euler_des, ib, jb, kb, delta)
-    #
-    # time = np.linspace(0, Ts, T - 1)
-    # plt.subplot(3, 1, 1)
-    # plt.plot(time, u_traj[0, :])
-    #
-    # plt.subplot(3, 1, 2)
-    # plt.plot(time, u_traj[1, :])
-    #
-    # plt.subplot(3, 1, 3)
-    # plt.plot(time, u_traj[2, :])
-    # plt.show()
-    #
+    [x_traj, u_traj] = tra_gen(x_traj, u_traj, x_des)
+    S = np.zeros(T)
+    for t in range(T - 1):
+        q_t = x_traj[3:, t]
+        R = q2R(q_t)
+        ib[:, t] = R @ ib[:, 0]
+        jb[:, t] = R @ jb[:, 0]
+        kb[:, t] = R @ kb[:, 0]
 
-    ################################################################3
+        body_vec = q2R(x_traj[3:, t]) @ np.array([1, 0, 0])
+        # S_t = body_vec.T @ zone_vec_center - np.cos(half_angle*np.pi/180)
+        S_t = body_vec.T @ zone_vec_center
+        S[t] = S_t
+    attitude_plot(x_traj, euler_des, ib, jb, kb, delta)
+
+    time = np.linspace(0, Ts, T - 1)
+    plt.subplot(3, 1, 1)
+    plt.plot(time, u_traj[0, :])
+
+    plt.subplot(3, 1, 2)
+    plt.plot(time, u_traj[1, :])
+
+    plt.subplot(3, 1, 3)
+    plt.plot(time, u_traj[2, :])
+    plt.show()
+
+    ######################### Dynamic test(No control)
 
     q = np.zeros((4, T))
     omega = np.zeros((3, T))
@@ -1018,9 +1170,9 @@ if __name__ == "__main__":
     delta = np.zeros((4, T))  # Deflection angle for wings
     #### Valid linearization range is from -pi/4.5 to pi/4.5
     delta[0, :] = np.pi / 4.5
-    delta[1, :] = -np.pi / 4.5
+    delta[1, :] = np.pi / 4.5
     delta[2, :] = np.pi / 4.5
-    delta[3, :] = -np.pi / 4.5
+    # delta[3, :] = -np.pi / 4.5
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
