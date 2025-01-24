@@ -38,7 +38,7 @@ def f_continuous_aero(
         delta_t: np.ndarray
 ) -> np.ndarray:
     # Rotation matrix from body to LVLH
-    R_t = q2R(x_traj[3:, t])
+    R_t = q2R(x_t[3:])
 
     # Torque arm
     la = np.zeros((3, 10))
@@ -101,7 +101,7 @@ def f_continuous_aero(
         if i <= 7:
             x = np.dot(surf_normal_wing_body[:, i], x_axis)
         else:
-            x = np.dot(surf_normal[:,i], x_axis)
+            x = np.dot(surf_normal[:, i], x_axis)
         condlist = [x < 0, x >= 0]
         choicelist = [0, x]
         cosine_list[i] = np.select(condlist, choicelist)
@@ -119,9 +119,9 @@ def f_continuous_aero(
 
     for i in range(8):
         wing_index = int(np.floor(i / 2))
-        u_t = u_t + np.cross(L_t[:, i],la[:, wing_index])
+        u_t = u_t + np.cross(L_t[:, i], la[:, wing_index])
 
-    print(u_t)
+    # print(u_t)
     omega_t = x_t[0:3]
     q_t = x_t[3:]
     p = np.zeros(4)
@@ -169,6 +169,139 @@ def f_jax(
     # qdot_t = np.zeros(4)
 
     x_dot_jax = jnp.concatenate((omegadot, qdot), 0)
+    return x_dot_jax
+
+
+def f_jax_aero(
+        x_t: jnp.ndarray,
+        delta_t: jnp.ndarray
+) -> np.ndarray:
+    # Rotation matrix from body to LVLH
+    R_t = q2R_jax(x_t[3:])
+
+    width = 0.05
+    length = 0.15
+    # Torque arm
+    la = jnp.zeros((3, 10))
+    la = la.at[:, 0].set(jnp.array([-length, -1.5 * length, 0]))
+    la = la.at[:, 1].set(jnp.array([-length, 1.5 * length, 0]))
+    la = la.at[:, 2].set(jnp.array([-length, 0, 1.5 * length]))
+    la = la.at[:, 3].set(jnp.array([-length, 0, -1.5 * length]))
+
+    la = la.at[:, 4].set(jnp.array([length, 0, 0]))
+    la = la.at[:, 5].set(jnp.array([-length, 0, 0]))
+
+    la = la.at[:, 6].set(jnp.array([0, -width, 0]))
+    la = la.at[:, 7].set(jnp.array([0, width, 0]))
+
+    la = la.at[:, 8].set(jnp.array([0, 0, width]))
+    la = la.at[:, 9].set(jnp.array([0, 0, -width]))
+
+    ############# Surface normals in wing and body frames
+    surf_normal = jnp.zeros((3, 14))
+    # For wings
+    surf_normal = surf_normal.at[:, 0].set(jnp.array([0, 0, 1]))
+    surf_normal = surf_normal.at[:, 1].set(jnp.array([0, 0, -1]))
+
+    surf_normal = surf_normal.at[:, 2].set(jnp.array([0, 0, 1]))
+    surf_normal = surf_normal.at[:, 3].set(jnp.array([0, 0, -1]))
+
+    surf_normal = surf_normal.at[:, 4].set(jnp.array([0, -1, 0]))
+    surf_normal = surf_normal.at[:, 5].set(jnp.array([0, 1, 0]))
+
+    surf_normal = surf_normal.at[:, 6].set(jnp.array([0, -1, 0]))
+    surf_normal = surf_normal.at[:, 7].set(jnp.array([0, 1, 0]))
+
+    # For main body
+    surf_normal = surf_normal.at[:, 8].set(jnp.array([1, 0, 0]))
+    surf_normal = surf_normal.at[:, 9].set(jnp.array([-1, 0, 0]))
+
+    surf_normal = surf_normal.at[:, 10].set(jnp.array([0, -1, 0]))
+    surf_normal = surf_normal.at[:, 11].set(jnp.array([0, 1, 0]))
+
+    surf_normal = surf_normal.at[:, 12].set(jnp.array([0, 0, 1]))
+    surf_normal = surf_normal.at[:, 13].set(jnp.array([0, 0, -1]))
+
+    ## Surface normals in wing and LVLH frame
+    surf_normal_LVLH = jnp.zeros((3, 14))
+    ## Surface normals of wings in body frame
+    surf_normal_wing_body = jnp.zeros((3, 8))
+
+
+
+
+
+    for i in range(8):
+        wing_index = int(np.floor(i / 2))
+
+        if wing_index <= 1:
+            R_wing = jnp.array([[jnp.cos(delta_t[wing_index]), 0, jnp.sin(delta_t[wing_index])],
+                       [0, 1, 0],
+                       [-jnp.sin(delta_t[wing_index]), 0, jnp.cos(delta_t[wing_index])]])
+        else:
+            R_wing = jnp.array([[jnp.cos(delta_t[wing_index]), -jnp.sin(delta_t[wing_index]), 0],
+                             [jnp.sin(delta_t[wing_index]), jnp.cos(delta_t[wing_index]), 0],
+                             [0, 0, 1]])
+
+
+
+        # R_wing = R_nb_jax(wing_index, delta_t)
+        # surf_normal_wing_body[:, i] = R_wing @ surf_normal[:, i]
+        surf_normal_wing_body = surf_normal_wing_body.at[:, i].set(R_wing @ surf_normal[:, i])
+        # surf_normal_LVLH[:, i] = R_wing @ R_t @ surf_normal[:, i]
+        surf_normal_LVLH = surf_normal_LVLH.at[:, i].set(R_wing @ R_t @ surf_normal[:, i])
+    for i in range(4):
+        # surf_normal_LVLH[:, i] = R_t @ surf_normal[:, i]
+        surf_normal_LVLH = surf_normal_LVLH.at[:, i].set(R_t @ surf_normal[:, i])
+
+    ## Find u_t
+    # Find the angle between the x-axis and the surface normals in the LVLH frame
+    cosine_list = jnp.zeros(14)
+    x_axis = jnp.array([1, 0, 0])
+    for i in range(14):
+        if i <= 7:
+            x = jnp.dot(surf_normal_wing_body[:, i], x_axis)
+        else:
+            x = jnp.dot(surf_normal[:, i], x_axis)
+        condlist = [x < 0, x >= 0]
+        choicelist = [0, x]
+        # cosine_list[i] = jnp.select(condlist, choicelist)
+        cosine_list = cosine_list.at[i].set(jnp.select(condlist, choicelist))
+    # Find the force acting on each surface
+    dynamic_pressure = 0.1
+    L_t = jnp.zeros((3, 14))  ## Lift acting on each surface
+    areas = jnp.zeros(14)
+    for i in range(8):
+        # areas[i] = 0.1 * 0.3
+        wing_index = int(np.floor(i / 2))
+        areas = areas.at[i].set(0.1 * 0.3)
+        # L_t[:, i] = areas[i] * cosine_list[i] * dynamic_pressure * surf_normal_wing_body[:, i]
+        L_t = L_t.at[:, i].set(areas[i] * cosine_list[i] * dynamic_pressure * surf_normal_wing_body[:, i])
+
+    # Total moment applied on the body
+    h_t = jnp.zeros(3)
+
+    for i in range(8):
+        wing_index = int(np.floor(i / 2))
+        h_t = h_t + jnp.cross(L_t[:, i], la[:, wing_index])
+        # u_t = u_t + jnp.cross(la[:, wing_index], L_t[:, i])
+
+    omega_t = x_t[0:3]
+    q_t = x_t[3:]
+    p = jnp.zeros(4)
+    p = p.at[1:].set(omega_t)
+    Omega = jnp.array([[p[0], -p[1], -p[2], -p[3]],
+                       [p[1], p[0], p[3], -p[2]],
+                       [p[2], -p[3], p[0], p[1]],
+                       [p[3], p[2], -p[1], p[0]]])
+
+    omegadot_t = jnp.linalg.inv(J) @ (h_t - jnp.cross(omega_t, (J @ omega_t)))
+    qdot_t = 0.5 * Omega @ q_t
+    # print(qdot_t)
+    # qdot_t = np.zeros(4)
+
+    x_dot_jax = jnp.concatenate((omegadot_t, qdot_t), 0)
+
     return x_dot_jax
 
 
@@ -228,7 +361,36 @@ def linearize(
     return A, B
 
 
+def linearize_aero(
+        f_jax_aero: jnp.ndarray,
+        x_t: np.ndarray,
+        delta_t: np.ndarray
+):
+    # Compute the Jacobian of f(x, u) with respect to x (A matrix)
+    # A = jax.jacobian(lambda x: f_jax(x, u_t))(x_t)
+    A = jax.jacobian(lambda x: f_jax_aero(x, delta_t))(x_t)
+    # Compute the Jacobian of f(x, u) with respect to u (B matrix)
+    # B = jax.jacobian(lambda u: f_jax(x_t, u))(u_t)
+    B = jax.jacobian(lambda delta: f_jax_aero(x_t, delta))(delta_t)
+
+    return A, B
+
+
 def discretization(
+        A: np.ndarray,
+        B: np.ndarray
+) -> list:
+    C = np.eye(7)
+    D = np.zeros((7, 3))
+    sys = signal.StateSpace(A, B, C, D)
+    sysd = sys.to_discrete(dt)
+    Ad = sysd.A
+    Bd = sysd.B
+
+    return Ad, Bd
+
+
+def discretization_aero(
         A: np.ndarray,
         B: np.ndarray
 ) -> list:
@@ -410,11 +572,38 @@ def R_nb(
     return R
 
 
+def R_nb_jax(
+        index: int,  # index of the wing
+        delta: jnp.ndarray
+) -> jnp.ndarray:
+    if index <= 1:
+        R_y = jnp.array([[jnp.cos(delta[index]), 0, jnp.sin(delta[index])],
+                         [0, 1, 0],
+                         [-jnp.sin(delta[index]), 0, jnp.cos(delta[index])]])
+        R = R_y
+    else:
+        R_z = jnp.array([[jnp.cos(delta[index]), -jnp.sin(delta[index]), 0],
+                         [jnp.sin(delta[index]), jnp.cos(delta[index]), 0],
+                         [0, 0, 1]])
+        R = R_z
+    return R
+
+
 # From quaternion to rotation matrix from body frame to LVLH (123)
 def q2R(
         q: np.ndarray
 ) -> np.ndarray:
     R = np.array(
+        [[1 - 2 * (q[2] * q[2] + q[3] * q[3]), 2 * (q[1] * q[2] - q[0] * q[3]), 2 * (q[1] * q[3] + q[0] * q[2])],
+         [2 * (q[1] * q[2] + q[0] * q[3]), 1 - 2 * (q[1] * q[1] + q[3] * q[3]), 2 * (q[2] * q[3] - q[0] * q[1])],
+         [2 * (q[1] * q[3] - q[0] * q[2]), 2 * (q[2] * q[3] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])]])
+    return R
+
+
+def q2R_jax(
+        q: jnp.ndarray
+) -> jnp.ndarray:
+    R = jnp.array(
         [[1 - 2 * (q[2] * q[2] + q[3] * q[3]), 2 * (q[1] * q[2] - q[0] * q[3]), 2 * (q[1] * q[3] + q[0] * q[2])],
          [2 * (q[1] * q[2] + q[0] * q[3]), 1 - 2 * (q[1] * q[1] + q[3] * q[3]), 2 * (q[2] * q[3] - q[0] * q[1])],
          [2 * (q[1] * q[3] - q[0] * q[2]), 2 * (q[2] * q[3] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])]])
@@ -739,8 +928,8 @@ def attitude_plot(
 #########Global vriabls
 
 
-Ts = 50  # 50 second
-dt = 0.2
+Ts = 30  # 50 second
+dt = 0.5
 T = int(Ts / dt)  # Total time steps
 
 # Assume symmetric cube
@@ -775,9 +964,9 @@ if __name__ == "__main__":
     q[:, 0] = np.array([1, 0, 0, 0])
     delta = np.zeros((4, T))  # Deflection angle for wings
     delta[0, :] = np.pi / 4
-    delta[1, :] = -np.pi / 3
-    delta[2, :] = np.pi / 4
-    delta[3, :] = -np.pi / 3
+    delta[1, :] = -np.pi / 4
+    # delta[2, :] = np.pi / 4
+    # delta[3, :] = -np.pi / 3
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
@@ -827,10 +1016,11 @@ if __name__ == "__main__":
     omega = np.zeros((3, T))
     q[:, 0] = np.array([1, 0, 0, 0])
     delta = np.zeros((4, T))  # Deflection angle for wings
-    delta[0, :] = np.pi / 4
-    delta[1, :] = -np.pi / 4
-    # delta[2, :] = np.pi / 2
-    # delta[3, :] = np.pi / 2
+    #### Valid linearization range is from -pi/4.5 to pi/4.5
+    delta[0, :] = np.pi / 4.5
+    delta[1, :] = -np.pi / 4.5
+    delta[2, :] = np.pi / 4.5
+    delta[3, :] = -np.pi / 4.5
     x = np.concatenate((omega, q), 0)
     u = np.zeros((3, T - 1))
     u[0, :] = 0.001 * np.ones(T - 1)
@@ -848,16 +1038,18 @@ if __name__ == "__main__":
     u_traj = np.zeros([3, T - 1])
 
     for t in range(T - 1):
+        print("Progress:    ", t / T * 100)
         delta_t = delta[:, t]
         x_t = x_traj[:, t]
         u_t = u[:, t]
         q_t = x_t[3:] / LA.norm(x_t[3:], 2)
-        [A, B] = linearize(f_jax, x_t, u_t)
+        [A, B] = linearize_aero(f_jax_aero, x_t, delta_t)
         A = np.asarray(A)
         B = np.asarray(B)
         # Continuous
         # x_dot = f_continuous(x_t, u_t)
-        x_dot = f_continuous_aero(x_t, delta_t)
+        # x_dot = f_continuous_aero(x_t, delta_t)
+        x_dot = A @ x_t + B @ delta_t
         # Linearized
         # x_dot_ja = A @ x_t + B @ u_t
         # Discretized
